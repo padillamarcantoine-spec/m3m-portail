@@ -1,0 +1,70 @@
+/* Design system — Meubles Trois Mousquetaires
+   Tokens et primitives partagés par le portail client et la console admin.
+   Fidèle au handoff : couleurs, typographie, rayons, ombres, animations. */
+:root{
+  --noir:#0d0b09; --noir2:#14100b; --noir3:#12100c;
+  --encre:#1b1510;
+  --creme:#f6f2e9; --creme-fonce:#efe9db; --surface:#fffdf8;
+  --laiton:#c89b3c; --or-fonce:#96712a; --or-fonce2:#8f6b1e;
+  --creme-claire:#f3ecda;
+  --beige-sec:#a89e8a; --beige-sec2:#cfc5ad;
+  --gris-brun:#6f6353; --gris-brun2:#8d8069; --gris-brun3:#4d4335;
+  --bord:#e5dcc7; --bord2:#e3dac5; --bord3:#d8cdb4; --bord4:#eee7d6;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --sans:'Jost','Helvetica Neue',Arial,sans-serif;
+  --mono:ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--creme);color:var(--encre);font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+a{color:#7a5a1e;text-decoration:none}
+a:hover{color:var(--or-fonce2);text-decoration:underline}
+input,select,textarea,button{font-family:inherit}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--or-fonce);outline-offset:2px}
+::selection{background:var(--laiton);color:var(--encre)}
+img{max-width:100%}
+
+@keyframes m3mFade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes m3mPop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+.m3mFade{animation:m3mFade .45s ease both}
+
+/* eyebrow / surtitres */
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;color:var(--or-fonce)}
+.eyebrow.on-dark{color:var(--laiton)}
+
+/* boutons */
+.btn{border-radius:2px;cursor:pointer;font-weight:500;letter-spacing:.06em;transition:background .18s,border-color .18s,color .18s;font-size:14px;padding:13px 24px;border:1px solid var(--encre);background:var(--encre);color:#f6f0e0}
+.btn:hover{background:var(--laiton);border-color:var(--laiton);color:var(--encre)}
+.btn-or{background:var(--laiton);border-color:var(--laiton);color:var(--noir2);font-weight:600}
+.btn-or:hover{background:var(--creme-claire);border-color:var(--creme-claire);color:var(--encre)}
+.btn-ghost{background:transparent;border-color:#c7bba0;color:var(--encre)}
+.btn-ghost:hover{background:transparent;border-color:var(--encre);color:var(--encre)}
+.btn-ghost-dark{background:transparent;border-color:rgba(243,236,218,.32);color:var(--creme-claire)}
+.btn-ghost-dark:hover{background:transparent;border-color:var(--laiton);color:var(--laiton)}
+
+/* champs */
+.field{background:var(--creme);border:1px solid var(--bord3);border-radius:2px;padding:12px 14px;font-size:14.5px;color:var(--encre);width:100%}
+.field:focus{border-color:var(--encre)}
+.label{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--gris-brun)}
+
+/* chips / pastilles */
+.chip{border-radius:999px;padding:7px 15px;cursor:pointer;font-size:12.5px;font-weight:500;background:transparent;border:1px solid #d3c7ab;color:var(--gris-brun3);transition:background .15s,border-color .15s,color .15s}
+.chip:hover{border-color:var(--encre)}
+.chip.actif{background:var(--encre);border-color:var(--encre);color:#f6f0e0}
+
+/* badges de statut sémantiques */
+.badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:5px 12px}
+.badge.ok{border:1px solid #b9c39a;color:#5c6b3c;background:#f2f4e6}
+.badge.attention{border:1px solid #e0b79f;color:#a4562f;background:#faeee6}
+.badge.gold,.badge.fin{border:1px solid #d8c89b;color:#8f6b1e;background:#faf5e7}
+.badge.blue{border:1px solid #b8c4d8;color:#4a5c7e;background:#eef1f7}
+.badge.grey{border:1px solid #d2cabd;color:#777066;background:#f1ede5}
+
+.container{max-width:1240px;margin:0 auto}
+.card{background:var(--surface);border:1px solid var(--bord);border-radius:4px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+
+.skip{position:absolute;left:-9999px;top:8px;background:var(--encre);color:#f6f0e0;padding:10px 16px;border-radius:2px;z-index:200;text-decoration:none}.skip:focus{left:8px}
+
+/* placeholder rayé pour photos manquantes */
+.placeholder-stripe{background:repeating-linear-gradient(45deg,#eee8d9 0px,#eee8d9 10px,#e7dfcc 10px,#e7dfcc 20px)}

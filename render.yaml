@@ -1,0 +1,24 @@
+# Configuration Render — déploiement automatique de l'application M3M.
+# Render lit ce fichier et configure tout seul le service.
+services:
+  - type: web
+    name: m3m-portail
+    runtime: node
+    plan: starter            # 7 $/mois — inclut un disque persistant pour la base de données.
+                             # (Le plan "free" fonctionne aussi mais la base se réinitialise
+                             #  à chaque redéploiement — voir GUIDE-MISE-EN-LIGNE.md.)
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: SESSION_SECRET
+        generateValue: true   # Render génère un secret aléatoire sûr automatiquement.
+      - key: ADMIN_CODE
+        sync: false           # À saisir dans le tableau de bord Render (ne pas versionner).
+      - key: DB_PATH
+        value: /var/data/m3m.sqlite   # La base vit sur le disque persistant ci-dessous.
+    disk:
+      name: m3m-data
+      mountPath: /var/data    # Disque persistant : la base de données survit aux redéploiements.
+      sizeGB: 1
