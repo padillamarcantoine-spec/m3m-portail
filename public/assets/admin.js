@@ -25,19 +25,28 @@ const ICON = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5 9-11"/></svg>',
   wrench: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14.7 6.3a4 4 0 0 1-5 5L5 16v3h3l4.7-4.7a4 4 0 0 1 5-5l-2.3-2.3 2.3-2.3-3-1z"/></svg>',
   book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M9 3v16"/></svg>',
-  inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h5l2 3h4l2-3h5"/><path d="M4 12l2-7h12l2 7v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/></svg>'
+  inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h5l2 3h4l2-3h5"/><path d="M4 12l2-7h12l2 7v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3.4"/><path d="M2.5 20c.7-3.4 3.4-5.4 6.5-5.4s5.8 2 6.5 5.4"/><circle cx="17.5" cy="9.5" r="2.6"/><path d="M15.6 14.9c2.8.2 5 1.9 5.7 4.6"/></svg>',
+  dollar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M15 8.5c-.6-1-1.7-1.5-3-1.5-1.8 0-3 1-3 2.4 0 3.4 6 1.6 6 5 0 1.5-1.3 2.6-3 2.6-1.4 0-2.6-.6-3.2-1.7"/><path d="M12 5.5v13"/></svg>'
 };
 
+const AUJOURDHUI = new Date().toISOString().slice(0, 10);
 const S = {
   ouvert: false, code: '', codeErr: false,
   route: 'dashboard', activeStore: 0, selRef: null,
   stores: [], suppliers: [], orders: [], stock: [],
   q: '', fStatut: 'Tous', fMagasin: 'Tous', fStock: 'Tous',
-  form: { modele:'', fournisseur:'', qte:'1', date:'2026-08-05', auteur:'', note:'', err:false, done:false, prefill:false, ref:'' },
+  form: { modele:'', fournisseur:'', qte:'1', date:AUJOURDHUI, auteur:'', note:'', err:false, done:false, prefill:false, ref:'' },
   demandes: { prix: [], financement: [], plans: [], nonTraite: 0 },
   services: [], savoir: [],
   srvForm: { client:'', item:'', probleme:'', piece:'', fournisseur:'', err:false, done:false, ref:'' },
-  savoirForm: { sujet:'', contenu:'', err:false, done:false }
+  savoirForm: { sujet:'', contenu:'', err:false, done:false },
+  clients: [], qClients: '', ficheId: null, fiche: null,
+  clientForm: { nom:'', courriel:'', tel:'', err:'', done:false },
+  factForm: { descr:'', montant:'', err:'', done:'' },
+  rec: { dossiers: [], totaux: {}, modes: {}, fraisDefaut: '' },
+  fAging: 'Tous', reglerFor: null, showReglements: false, reglements: [],
+  recForm: { nom:'', tel:'', courriel:'', montant:'', cheque:'', date: AUJOURDHUI, raison:'Chèque sans provision (NSF)', err:'', done:'' }
 };
 
 const STATUT = {
@@ -78,6 +87,8 @@ function sidebar() {
     <nav style="display:flex;flex-direction:column;gap:3px">
       ${nav('dashboard', ICON.dash, 'Tableau de bord', 0)}
       ${nav('demandes', ICON.inbox, 'Demandes', S.demandes.nonTraite, '#a4562f')}
+      ${nav('clients', ICON.users, 'Clients', 0)}
+      ${nav('recouvrement', ICON.dollar, 'Recouvrement', (S.rec.totaux || {}).nOuverts || 0, '#a4562f')}
       ${nav('nouvelle', ICON.plus, 'Nouvelle commande', 0)}
       ${nav('commandes', ICON.box, 'Commandes', kpiACommander, '#a4562f')}
       ${nav('inventaire', ICON.layers, 'Inventaire', alertes, '#c89b3c')}
@@ -94,7 +105,7 @@ function sidebar() {
 
 function header() {
   const active = S.stores[S.activeStore] || {};
-  const titres = { dashboard:'Tableau de bord', demandes:'Demandes entrantes', nouvelle:'Nouvelle commande', commandes:'Commandes fournisseurs', inventaire:'Inventaire', fournisseurs:'Fournisseurs', service:'Service / pièces', savoir:"Base de connaissances de l'agent" };
+  const titres = { dashboard:'Tableau de bord', demandes:'Demandes entrantes', nouvelle:'Nouvelle commande', commandes:'Commandes fournisseurs', inventaire:'Inventaire', fournisseurs:'Fournisseurs', service:'Service / pièces', savoir:"Base de connaissances de l'agent", clients:'Fiches clients', recouvrement:'Recouvrement — chèques refusés' };
   const now = new Date();
   const jours = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
   const dateStr = jours[now.getDay()] + ' ' + now.getDate() + ' ' + mois[now.getMonth()] + ' ' + now.getFullYear();
@@ -395,16 +406,166 @@ function viewSavoir() {
 }
 
 // ============ RENDU ============
+
+// ============ CLIENTS (CRM) ============
+function viewClients() {
+  if (S.ficheId) return viewFiche();
+  const q = S.qClients.trim().toLowerCase();
+  const rows = q ? S.clients.filter(c => (c.nom + ' ' + c.courriel + ' ' + (c.tel || '')).toLowerCase().includes(q)) : S.clients;
+  const liste = rows.length ? rows.map(c => `<div class="row" style="cursor:pointer" data-fiche="${c.id}">
+      <span class="dot" style="background:${c.dossiersOuverts > 0 ? '#a4562f' : (c.soldeCents > 0 ? '#c89b3c' : '#5c6b3c')}"></span>
+      <div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">${esc(c.nom)}</div>
+        <div style="font-size:12.5px;color:var(--gris-brun2)">${esc(c.courriel)}${c.tel ? ' · ' + esc(c.tel) : ''}</div></div>
+      <div style="text-align:right"><div style="font-size:13px;font-weight:600">${c.soldeCents > 0 ? esc(c.solde) + ' dû' : '—'}</div>
+        <div style="font-size:11.5px;color:var(--gris-brun2)">${c.nFactures} facture${c.nFactures > 1 ? 's' : ''} · ${c.nFinancements} fin.${c.dossiersOuverts > 0 ? ` · <span style="color:#a4562f;font-weight:600">${c.dossiersOuverts} recouvr.</span>` : ''}</div></div>
+    </div>`).join('') : `<div class="row" style="color:var(--gris-brun)">Aucune fiche${q ? ' pour cette recherche' : ''}.</div>`;
+  const f = S.clientForm;
+  return `<div class="acontent">
+    <div style="display:grid;grid-template-columns:1fr minmax(280px,340px);gap:20px;align-items:start">
+      <div class="panel"><div class="ph">Fiches clients (${rows.length})</div>
+        <div style="padding:12px 16px;border-bottom:1px solid var(--bord4)"><input id="qClients" value="${esc(S.qClients)}" placeholder="Chercher nom, courriel, téléphone…" class="field" style="width:100%"></div>
+        ${liste}</div>
+      <div class="panel"><div class="ph">Nouvelle fiche (vente en magasin)</div><div style="padding:16px">
+        ${f.done ? `<div style="background:#eef3e4;border:1px solid #b5c48f;border-radius:3px;padding:10px 12px;font-size:13px;color:#3f4d22;margin-bottom:12px">Fiche créée.</div>` : ''}
+        <div class="form-field"><label class="label">Nom</label><input id="cfNom" value="${esc(f.nom)}" class="field"></div>
+        <div class="form-field"><label class="label">Courriel</label><input id="cfCourriel" value="${esc(f.courriel)}" class="field"></div>
+        <div class="form-field"><label class="label">Téléphone</label><input id="cfTel" value="${esc(f.tel)}" class="field"></div>
+        ${f.err ? `<div class="err" style="margin-bottom:10px">${esc(f.err)}</div>` : ''}
+        <button class="btn" style="width:100%" data-act="nouvelle-fiche">Créer la fiche</button>
+      </div></div>
+    </div></div>`;
+}
+
+function viewFiche() {
+  const c = S.fiche;
+  if (!c) return `<div class="acontent"><div class="panel" style="padding:40px;text-align:center;color:var(--gris-brun)">Chargement de la fiche…</div></div>`;
+  const ff = S.factForm;
+  const stChip = { a_payer: ['À payer', '#a4562f'], payee: ['Payée', '#5c6b3c'], financement: ['Financement', '#c89b3c'] };
+  return `<div class="acontent">
+    <button class="btn btn-ghost" style="margin-bottom:14px;padding:8px 14px;font-size:12.5px" data-act="fermer-fiche">← Toutes les fiches</button>
+    <div style="display:grid;grid-template-columns:minmax(260px,320px) 1fr;gap:20px;align-items:start">
+      <div class="panel"><div class="ph">${esc(c.nom)}</div><div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+        <div><div class="label">Courriel</div><div style="font-size:13.5px">${esc(c.courriel)}</div></div>
+        <div class="form-field" style="margin:0"><label class="label">Téléphone</label><input id="fiTel" value="${esc(c.tel || '')}" class="field"></div>
+        <div class="form-field" style="margin:0"><label class="label">Adresse</label><input id="fiAdresse" value="${esc(c.adresse || '')}" class="field"></div>
+        <div class="form-field" style="margin:0"><label class="label">Note interne</label><textarea id="fiNote" rows="3" class="field" style="resize:vertical">${esc(c.note || '')}</textarea></div>
+        <button class="btn btn-ghost" data-act="maj-fiche">Enregistrer la fiche</button>
+        <div style="border-top:1px solid var(--bord4);padding-top:10px"><div class="label">Solde dû</div><div class="serif" style="font-size:24px;font-weight:600">${esc(c.solde)}</div></div>
+      </div></div>
+      <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
+        <div class="panel"><div class="ph">Factures</div>
+          ${c.factures.map(fa => { const sc = stChip[fa.statut] || [fa.statut, '#777']; return `<div class="row">
+            <span class="dot" style="background:${sc[1]}"></span>
+            <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600">${esc(fa.ref)} — ${esc(fa.descr)}</div><div style="font-size:12px;color:var(--gris-brun2)">${esc(fa.date)}${fa.meta ? ' · ' + esc(fa.meta) : ''}</div></div>
+            <div style="font-weight:600;font-size:13.5px">${esc(fa.montant)}</div>
+            <span class="magchip" style="font-size:11px">${sc[0]}</span>
+            ${fa.statut !== 'payee' ? `<button class="btn" style="padding:6px 12px;font-size:11.5px" data-factstatut="${fa.id}" data-newst="payee">Marquer payée</button>` : ''}
+          </div>`; }).join('') || '<div class="row" style="color:var(--gris-brun)">Aucune facture.</div>'}
+          <div style="padding:14px 16px;border-top:1px solid var(--bord4);display:grid;grid-template-columns:2fr 1fr auto;gap:10px;align-items:end">
+            <div class="form-field" style="margin:0"><label class="label">Nouvelle facture — description</label><input id="nfDescr" value="${esc(ff.descr)}" class="field" placeholder="Ex. : Sofa Isabella"></div>
+            <div class="form-field" style="margin:0"><label class="label">Montant</label><input id="nfMontant" value="${esc(ff.montant)}" class="field" placeholder="1 095,00 $"></div>
+            <button class="btn" data-act="nouvelle-facture">Ajouter</button>
+          </div>
+          ${ff.err ? `<div class="err" style="padding:0 16px 12px">${esc(ff.err)}</div>` : ''}${ff.done ? `<div style="padding:0 16px 12px;font-size:12.5px;color:#3f4d22">Facture ${esc(ff.done)} créée — visible aussitôt dans l'espace client.</div>` : ''}
+        </div>
+        <div class="panel"><div class="ph">Financements maison</div>
+          ${c.financements.map(fi => `<div class="row"><span class="dot" style="background:${fi.statut === 'actif' ? '#5c6b3c' : fi.statut === 'refuse_nouveau' ? '#a4562f' : '#c89b3c'}"></span>
+            <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600">${esc(fi.ref)} — ${esc(fi.item)}</div>
+            <div style="font-size:12px;color:var(--gris-brun2)">${esc(fi.montant)} · ${esc(fi.mensualite)}/mois × ${fi.n_mois} · ${esc(fi.statut)}</div></div></div>`).join('') || '<div class="row" style="color:var(--gris-brun)">Aucun financement.</div>'}
+        </div>
+        <div class="panel"><div class="ph">Dossiers de recouvrement</div>
+          ${c.dossiers.map(d => `<div class="row"><span class="dot" style="background:${d.statut === 'recupere' ? '#5c6b3c' : d.statut === 'radie' ? '#8d8069' : '#a4562f'}"></span>
+            <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600">${esc(d.ref)} — ${esc(d.montant)}</div>
+            <div style="font-size:12px;color:var(--gris-brun2)">${esc(d.raison)} · refusé le ${esc(frDate(d.date_refus))} · ${esc(d.statut)}</div></div></div>`).join('') || '<div class="row" style="color:var(--gris-brun)">Aucun dossier — parfait.</div>'}
+        </div>
+      </div>
+    </div></div>`;
+}
+
+// ============ RECOUVREMENT ============
+function viewRecouvrement() {
+  const R = S.rec || {}; const modes = R.modes || {};
+  const stLab = { ouvert: ['Ouvert', '#a4562f'], promesse: ['Promesse', '#c89b3c'], recupere: ['Récupéré', '#5c6b3c'], radie: ['Radié', '#8d8069'] };
+  const dossiers = (R.dossiers || []).filter(d => S.fAging === 'Tous' || (d.tranche === S.fAging && (d.statut === 'ouvert' || d.statut === 'promesse')));
+  const rf = S.recForm;
+  const chips = ['Tous', '0-30', '31-60', '61-90', '90+'].map(a => `<button class="chip${S.fAging === a ? ' actif' : ''}" data-aging="${a}">${a === 'Tous' ? 'Tous les dossiers' : a + ' jours'}</button>`).join('');
+  const rows = dossiers.map(d => `<div class="row" style="${d.escalade ? 'background:rgba(164,86,47,.06)' : ''}">
+      <span class="dot" style="background:${(stLab[d.statut] || ['', '#777'])[1]}"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:600">${esc(d.client_nom)} — ${esc(d.total)} <span style="font-weight:400;color:var(--gris-brun2)">(${esc(d.montant)}${d.frais_cents > 0 ? ' + ' + esc(d.frais) + ' frais' : ''})</span>${d.escalade ? ' <span style="color:#a4562f;font-size:11px;font-weight:700">⚠ MED</span>' : ''}</div>
+        <div style="font-size:12px;color:var(--gris-brun2)">${d.type === 'cheque_nsf' ? 'Chèque' + (d.no_cheque ? ' #' + esc(d.no_cheque) : '') : 'Stripe'} · ${esc(d.raison)} · refusé le ${esc(frDate(d.date_refus))} · <strong>${d.jours} j</strong>${d.client_tel ? ' · ' + esc(d.client_tel) : ''}${d.financement_ref ? ' · plan ' + esc(d.financement_ref) : ''}${d.statut === 'promesse' && d.promesse_note ? ' · 🤝 ' + esc(d.promesse_note) : ''}${d.statut === 'recupere' ? ' · réglé (' + esc(d.modeLabel) + ') le ' + esc(d.regle_le || '') : ''}</div>
+      </div>
+      <span class="magchip" style="font-size:11px">${(stLab[d.statut] || [d.statut])[0]}</span>
+      ${(d.statut === 'ouvert' || d.statut === 'promesse') ? `
+        <button class="btn" style="padding:6px 12px;font-size:11.5px" data-regler="${d.ref}">Régler</button>
+        <button class="btn btn-ghost" style="padding:6px 10px;font-size:11.5px" data-promesse="${d.ref}">Promesse</button>
+        <button class="btn btn-ghost" style="padding:6px 10px;font-size:11.5px" data-frais="${d.ref}" title="Ajouter les frais NSF (${esc(R.fraisDefaut || '15,00 $')})">+ Frais</button>
+        <button class="btn btn-ghost" style="padding:6px 10px;font-size:11.5px;color:#8d8069" data-radier="${d.ref}">Radier</button>` : ''}
+    </div>`).join('') || `<div class="row" style="color:var(--gris-brun)">Aucun dossier dans cette tranche.</div>`;
+
+  const modal = S.reglerFor ? `<div style="position:fixed;inset:0;background:rgba(20,16,11,.45);display:flex;align-items:center;justify-content:center;z-index:60" data-act="fermer-regler">
+      <div class="panel" style="max-width:430px;width:92%;padding:24px" data-stop>
+        <div class="eyebrow">Régler le dossier ${esc(S.reglerFor)}</div>
+        <p style="font-size:12.5px;color:var(--gris-brun);margin:8px 0 14px">Règle maison : un chèque refusé ne se règle <strong>jamais</strong> par un autre chèque TD. Choisis comment le client a payé :</p>
+        ${Object.entries(modes).map(([k, v]) => `<button class="btn btn-ghost" style="width:100%;margin-bottom:8px" data-modereg="${k}">${esc(v)}</button>`).join('')}
+        <button class="btn btn-ghost" style="width:100%;margin-top:6px;color:#8d8069" data-act="fermer-regler">Annuler</button>
+      </div></div>` : '';
+
+  const regs = S.showReglements ? `<div class="panel" style="margin-top:20px"><div class="ph">Registre des règlements (300 derniers)</div>
+      ${S.reglements.map(r => `<div class="row"><span class="dot" style="background:${r.statut === 'refuse' ? '#a4562f' : '#5c6b3c'}"></span>
+        <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">${esc(r.client_nom)} — ${r.statut === 'refuse' ? `<span style="color:#a4562f">0,00 $ (chèque refusé — était ${esc(r.montantOriginal)})</span>` : esc(r.montant)}</div>
+        <div style="font-size:12px;color:var(--gris-brun2)">${esc(r.modeLabel)}${r.no_cheque ? ' #' + esc(r.no_cheque) : ''} · ${esc(frDate(r.date))}${r.dossier_ref ? ' · dossier ' + esc(r.dossier_ref) : ''}${r.note ? ' · ' + esc(r.note) : ''}</div></div>
+        ${r.mode === 'cheque_td' && r.statut === 'encaisse' ? `<button class="btn btn-ghost" style="padding:6px 10px;font-size:11.5px;color:#a4562f" data-refuserreg="${r.id}">Marquer refusé</button>` : ''}
+      </div>`).join('') || '<div class="row" style="color:var(--gris-brun)">Aucun règlement.</div>'}</div>` : '';
+
+  return `<div class="acontent">
+    <div class="kpigrid">
+      <div class="kpi"><div class="lab" style="color:#a4562f">À récupérer</div><div class="val" style="color:#a4562f">${esc((R.totaux || {}).aRecuperer || '0,00 $')}</div></div>
+      <div class="kpi"><div class="lab" style="color:#5c6b3c">Récupéré</div><div class="val" style="color:#5c6b3c">${esc((R.totaux || {}).recupere || '0,00 $')}</div></div>
+      <div class="kpi dark"><div class="lab">Dossiers ouverts</div><div class="val">${(R.totaux || {}).nOuverts ?? 0}</div></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0">${chips}
+      <button class="chip${S.showReglements ? ' actif' : ''}" data-act="toggle-reglements" style="margin-left:auto">Registre des règlements</button></div>
+    <div style="display:grid;grid-template-columns:1fr minmax(280px,340px);gap:20px;align-items:start;margin-top:16px">
+      <div class="panel"><div class="ph">Dossiers — chèques refusés &amp; prélèvements échoués</div>${rows}</div>
+      <div class="panel"><div class="ph">Saisir un chèque refusé (banque)</div><div style="padding:16px">
+        <div class="form-field"><label class="label">Client</label><input id="rcNom" value="${esc(rf.nom)}" class="field"></div>
+        <div class="form-field"><label class="label">Téléphone</label><input id="rcTel" value="${esc(rf.tel)}" class="field"></div>
+        <div class="form-field"><label class="label">Courriel (lie la fiche client si trouvée)</label><input id="rcCourriel" value="${esc(rf.courriel)}" class="field"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-field"><label class="label">Montant</label><input id="rcMontant" value="${esc(rf.montant)}" class="field" placeholder="228,85 $"></div>
+          <div class="form-field"><label class="label">N° de chèque</label><input id="rcCheque" value="${esc(rf.cheque)}" class="field"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-field"><label class="label">Date du refus</label><input id="rcDate" type="date" value="${esc(rf.date)}" class="field"></div>
+          <div class="form-field"><label class="label">Raison</label><select id="rcRaison" class="field">
+            ${['Chèque sans provision (NSF)', 'Compte fermé', 'Arrêt de paiement', 'Signature non conforme', 'Autre'].map(x => `<option${rf.raison === x ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
+        </div>
+        ${rf.err ? `<div class="err" style="margin-bottom:10px">${esc(rf.err)}</div>` : ''}${rf.done ? `<div style="font-size:12.5px;color:#3f4d22;margin-bottom:10px">Dossier ${esc(rf.done)} créé.</div>` : ''}
+        <button class="btn" style="width:100%" data-act="nouveau-dossier">Créer le dossier</button>
+      </div></div>
+    </div>${regs}</div>${modal}`;
+}
+
 function render() {
   if (!S.ouvert) { $('#app').innerHTML = viewLock(); const c = $('#code'); if (c) c.focus(); return; }
-  const views = { dashboard: viewDashboard, demandes: viewDemandes, nouvelle: viewNouvelle, commandes: viewCommandes, inventaire: viewInventaire, fournisseurs: viewFournisseurs, service: viewServices, savoir: viewSavoir };
+  const views = { dashboard: viewDashboard, demandes: viewDemandes, nouvelle: viewNouvelle, commandes: viewCommandes, inventaire: viewInventaire, fournisseurs: viewFournisseurs, service: viewServices, savoir: viewSavoir, clients: viewClients, recouvrement: viewRecouvrement };
   const body = (views[S.route] || viewDashboard)();
   $('#app').innerHTML = `<div class="shell">${sidebar()}<div class="main">${header()}${body}</div></div>${S.selRef ? modal() : ''}`;
 }
 
+// Recherche clients (débounce + focus conservé au re-render).
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'qClients') {
+    S.qClients = e.target.value;
+    clearTimeout(S._qT);
+    S._qT = setTimeout(() => { render(); const el = $('#qClients'); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (er) {} } }, 250);
+  }
+});
+
 // ============ ÉVÉNEMENTS ============
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-act],[data-route],[data-store],[data-sel],[data-fstatut],[data-fmag],[data-fstock],[data-adj],[data-cmdstock],[data-cmdfour],[data-avancer],[data-annuler],[data-avancersrv],[data-traiter],[data-stop]');
+  const t = e.target.closest('[data-act],[data-route],[data-store],[data-sel],[data-fstatut],[data-fmag],[data-fstock],[data-adj],[data-cmdstock],[data-cmdfour],[data-avancer],[data-annuler],[data-avancersrv],[data-traiter],[data-fiche],[data-aging],[data-regler],[data-modereg],[data-promesse],[data-frais],[data-radier],[data-refuserreg],[data-factstatut],[data-stop]');
   if (!t) return;
   if (t.dataset.stop !== undefined) { e.stopPropagation(); return; }
 
@@ -427,12 +588,12 @@ document.addEventListener('click', async (e) => {
   }
   if (t.dataset.cmdstock) {
     const st = S.stock.find(x => x.id === +t.dataset.cmdstock); const active = S.stores[S.activeStore];
-    S.form = { modele: st.modele, fournisseur: st.fournisseur, qte: String(t.dataset.sugg), date: '2026-08-05', auteur: active.contact, note: '', err: false, done: false, prefill: true, ref: '' };
+    S.form = { modele: st.modele, fournisseur: st.fournisseur, qte: String(t.dataset.sugg), date: AUJOURDHUI, auteur: active.contact, note: '', err: false, done: false, prefill: true, ref: '' };
     S.route = 'nouvelle'; S.selRef = null; render(); window.scrollTo(0,0); return;
   }
   if (t.dataset.cmdfour) {
     const active = S.stores[S.activeStore];
-    S.form = { modele: '', fournisseur: t.dataset.cmdfour, qte: '1', date: '2026-08-05', auteur: active.contact, note: '', err: false, done: false, prefill: false, ref: '' };
+    S.form = { modele: '', fournisseur: t.dataset.cmdfour, qte: '1', date: AUJOURDHUI, auteur: active.contact, note: '', err: false, done: false, prefill: false, ref: '' };
     S.route = 'nouvelle'; render(); window.scrollTo(0,0); return;
   }
   if (t.dataset.traiter) {
@@ -454,6 +615,45 @@ document.addEventListener('click', async (e) => {
     catch (err) { alert(err.message); } return;
   }
 
+
+  if (t.dataset.fiche) {
+    S.ficheId = +t.dataset.fiche; S.fiche = null; S.factForm = { descr:'', montant:'', err:'', done:'' }; render();
+    try { S.fiche = await api('/admin/clients/' + S.ficheId); } catch (err) { S.ficheId = null; alert(err.message); }
+    render(); return;
+  }
+  if (t.dataset.aging) { S.fAging = t.dataset.aging; render(); return; }
+  if (t.dataset.regler) { S.reglerFor = t.dataset.regler; render(); return; }
+  if (t.dataset.modereg) {
+    try { await api('/admin/recouvrement/' + S.reglerFor + '/regler', { method: 'POST', body: { mode: t.dataset.modereg } });
+      S.reglerFor = null; await chargerRec(); await chargerReglements(); render(); }
+    catch (err) { alert(err.message); } return;
+  }
+  if (t.dataset.promesse) {
+    const note = prompt('Note de promesse (ex. : passe vendredi avec le cash) :') || '';
+    try { await api('/admin/recouvrement/' + t.dataset.promesse + '/promesse', { method: 'POST', body: { note } }); await chargerRec(); render(); }
+    catch (err) { alert(err.message); } return;
+  }
+  if (t.dataset.frais) {
+    try { await api('/admin/recouvrement/' + t.dataset.frais + '/frais', { method: 'POST', body: {} }); await chargerRec(); render(); }
+    catch (err) { alert(err.message); } return;
+  }
+  if (t.dataset.radier) {
+    if (!confirm('Radier ce dossier (abandon de la créance) ?')) return;
+    try { await api('/admin/recouvrement/' + t.dataset.radier + '/radier', { method: 'POST' }); await chargerRec(); render(); }
+    catch (err) { alert(err.message); } return;
+  }
+  if (t.dataset.refuserreg) {
+    if (!confirm('Marquer ce chèque TD comme refusé (NSF) ? Le règlement tombera à 0 $ et le dossier de recouvrement sera créé avec toutes les infos.')) return;
+    try { const r = await api('/admin/reglements/' + t.dataset.refuserreg + '/refuser', { method: 'POST', body: {} });
+      await chargerRec(); await chargerReglements(); render(); alert('Dossier ' + r.dossier + ' créé dans Recouvrement.'); }
+    catch (err) { alert(err.message); } return;
+  }
+  if (t.dataset.factstatut) {
+    try { await api('/admin/factures/' + t.dataset.factstatut + '/statut', { method: 'POST', body: { statut: t.dataset.newst } });
+      S.fiche = await api('/admin/clients/' + S.ficheId); await chargerClients(); render(); }
+    catch (err) { alert(err.message); } return;
+  }
+
   const act = t.dataset.act;
   switch (act) {
     case 'deverrouiller': {
@@ -466,7 +666,7 @@ document.addEventListener('click', async (e) => {
     case 'reset-cmd': S.q = ''; S.fStatut = 'Tous'; S.fMagasin = 'Tous'; render(); break;
     case 'fermer-modal': S.selRef = null; render(); break;
     case 'voir-derniere': S.route = 'commandes'; S.selRef = S.form.ref; render(); break;
-    case 'autre-commande': { const active = S.stores[S.activeStore]; S.form = { modele:'', fournisseur:'', qte:'1', date:'2026-08-05', auteur:active.contact, note:'', err:false, done:false, prefill:false, ref:'' }; render(); break; }
+    case 'autre-commande': { const active = S.stores[S.activeStore]; S.form = { modele:'', fournisseur:'', qte:'1', date:AUJOURDHUI, auteur:active.contact, note:'', err:false, done:false, prefill:false, ref:'' }; render(); break; }
     case 'enregistrer-service': {
       const g = id => (document.getElementById(id) || {}).value || '';
       S.srvForm = { client:g('srvClient'), item:g('srvItemA'), probleme:g('srvProbleme'), piece:g('srvPiece'), fournisseur:g('srvFournisseur'), err:false, done:false, ref:'' };
@@ -476,6 +676,32 @@ document.addEventListener('click', async (e) => {
       catch (err) { S.srvForm.err = true; render(); }
       break;
     }
+    case 'fermer-fiche': S.ficheId = null; S.fiche = null; render(); break;
+    case 'maj-fiche': {
+      const body = { tel: $('#fiTel')?.value ?? null, adresse: $('#fiAdresse')?.value ?? null, note: $('#fiNote')?.value ?? null };
+      try { await api('/admin/clients/' + S.ficheId + '/maj', { method: 'POST', body }); S.fiche = await api('/admin/clients/' + S.ficheId); await chargerClients(); render(); }
+      catch (err) { alert(err.message); } break;
+    }
+    case 'nouvelle-fiche': {
+      const f = { nom: $('#cfNom')?.value || '', courriel: $('#cfCourriel')?.value || '', tel: $('#cfTel')?.value || '' };
+      try { await api('/admin/clients', { method: 'POST', body: f }); S.clientForm = { nom: '', courriel: '', tel: '', err: '', done: true }; await chargerClients(); render(); }
+      catch (err) { S.clientForm = { ...f, err: err.message, done: false }; render(); } break;
+    }
+    case 'nouvelle-facture': {
+      const f = { descr: $('#nfDescr')?.value || '', montant: $('#nfMontant')?.value || '' };
+      try { const r = await api('/admin/clients/' + S.ficheId + '/facture', { method: 'POST', body: f });
+        S.factForm = { descr: '', montant: '', err: '', done: r.ref }; S.fiche = await api('/admin/clients/' + S.ficheId); await chargerClients(); render(); }
+      catch (err) { S.factForm = { ...f, err: err.message, done: '' }; render(); } break;
+    }
+    case 'nouveau-dossier': {
+      const f = { client_nom: $('#rcNom')?.value || '', client_tel: $('#rcTel')?.value || '', client_courriel: $('#rcCourriel')?.value || '',
+                  montant: $('#rcMontant')?.value || '', no_cheque: $('#rcCheque')?.value || '', date_refus: $('#rcDate')?.value || '', raison: $('#rcRaison')?.value || '' };
+      try { const r = await api('/admin/recouvrement', { method: 'POST', body: f });
+        S.recForm = { nom: '', tel: '', courriel: '', montant: '', cheque: '', date: AUJOURDHUI, raison: 'Chèque sans provision (NSF)', err: '', done: r.ref }; await chargerRec(); render(); }
+      catch (err) { S.recForm = { nom: f.client_nom, tel: f.client_tel, courriel: f.client_courriel, montant: f.montant, cheque: f.no_cheque, date: f.date_refus || AUJOURDHUI, raison: f.raison, err: err.message, done: '' }; render(); } break;
+    }
+    case 'fermer-regler': S.reglerFor = null; render(); break;
+    case 'toggle-reglements': S.showReglements = !S.showReglements; if (S.showReglements) { try { S.reglements = await api('/admin/reglements'); } catch (e) {} } render(); break;
     case 'autre-service': S.srvForm = { client:'', item:'', probleme:'', piece:'', fournisseur:'', err:false, done:false, ref:'' }; render(); break;
     case 'ajouter-savoir': {
       const g = id => (document.getElementById(id) || {}).value || '';
@@ -527,6 +753,9 @@ async function chargerInventaire() { S.stock = await api('/admin/inventaire'); }
 async function chargerServices() { try { S.services = await api('/admin/services'); } catch { S.services = []; } }
 async function chargerSavoir() { try { S.savoir = await api('/admin/savoir'); } catch { S.savoir = []; } }
 async function chargerDemandes() { try { S.demandes = await api('/admin/demandes'); } catch { S.demandes = { prix: [], financement: [], plans: [], nonTraite: 0 }; } }
+async function chargerClients() { try { S.clients = await api('/admin/clients'); } catch { S.clients = []; } }
+async function chargerRec() { try { S.rec = await api('/admin/recouvrement'); } catch { S.rec = { dossiers: [], totaux: {}, modes: {} }; } }
+async function chargerReglements() { try { S.reglements = await api('/admin/reglements'); } catch { S.reglements = []; } }
 async function chargerTout() {
   S.stores = await api('/admin/magasins');
   S.suppliers = await api('/admin/fournisseurs');
@@ -535,6 +764,8 @@ async function chargerTout() {
   await chargerServices();
   await chargerSavoir();
   await chargerDemandes();
+  await chargerClients();
+  await chargerRec();
   if (!S.form.auteur && S.stores[S.activeStore]) S.form.auteur = S.stores[S.activeStore].contact;
 }
 

@@ -93,24 +93,41 @@ export async function creerLienConnexionBancaire({ courriel, nom, financementId 
 }
 
 // ÉTAPE 3 — créer l'abonnement mensuel récurrent une fois la banque confirmée.
-export async function creerAbonnementMensuel({ stripeCustomerId, mensualiteCents, nMois, itemNom }) {
+// `session` = la session Checkout confirmée (pour rattacher le PAD enregistré).
+export async function creerAbonnementMensuel({ stripeCustomerId, mensualiteCents, nMois, itemNom, session }) {
   const s = await stripe();
   if (!s) {
     console.log(`[Financement:SIMULATION] Abonnement ${nMois} × ${(mensualiteCents/100).toFixed(2)}$ pour « ${itemNom} ».`);
-    return { simulation: true, id: 'sub_sim_' + Date.now?.() };
+    return { simulation: true, id: 'sub_sim_' + Math.floor(Math.random() * 1e9) };
   }
+  // Rattacher le PAD capturé par le paiement de 1,15 $ comme moyen de paiement
+  // par défaut — sans ça, les factures mensuelles n'auraient aucun moyen de paiement.
+  let padId = null;
+  try {
+    const piId = session && (typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id);
+    if (piId) {
+      const pi = await s.paymentIntents.retrieve(piId);
+      padId = typeof pi.payment_method === 'string' ? pi.payment_method : pi.payment_method?.id || null;
+      if (padId && stripeCustomerId) {
+        await s.paymentMethods.attach(padId, { customer: stripeCustomerId }).catch(() => {}); // déjà attaché = ok
+      }
+    }
+  } catch (e) { console.warn('[Stripe] PAD non rattaché (continuera avec le défaut client) :', e.message); }
+
   const price = await s.prices.create({
     currency: 'cad', unit_amount: mensualiteCents,
     recurring: { interval: 'month' },
     product_data: { name: `Financement maison — ${itemNom}` }
   });
+  // L'abonnement S'ARRÊTE tout seul après nMois versements (jamais de prélèvement à vie).
+  const finTs = Math.floor(Date.now() / 1000) + Math.round(nMois * 30.44 * 86400);
   const sub = await s.subscriptions.create({
     customer: stripeCustomerId,
     items: [{ price: price.id }],
     collection_method: 'charge_automatically',
-    cancel_at: undefined,           // on gère la fin après nMois via metadata + webhook
+    cancel_at: finTs,
     metadata: { nMois: String(nMois), item: itemNom, taux: '29.99' },
-    default_payment_method: undefined // utilise le PAD enregistré du client
+    ...(padId ? { default_payment_method: padId } : {})
   });
   return { simulation: false, id: sub.id, status: sub.status };
 }

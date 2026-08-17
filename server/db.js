@@ -212,10 +212,62 @@ CREATE TABLE IF NOT EXISTS service_historique (
   quand TEXT NOT NULL,
   FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
 );
+
+-- Registre des règlements (chaque paiement reçu, peu importe le mode).
+-- mode ∈ { cheque_td, cash, depot_ginette, interac, compte_perso }
+-- statut ∈ { encaisse, refuse }  — un chèque refusé garde montant_original_cents
+-- mais son montant_cents tombe à 0 et un dossier de recouvrement est créé.
+CREATE TABLE IF NOT EXISTS reglements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  client_nom TEXT NOT NULL DEFAULT '',
+  financement_ref TEXT,
+  facture_id INTEGER,
+  mode TEXT NOT NULL CHECK (mode IN ('cheque_td','cash','depot_ginette','interac','compte_perso')),
+  montant_cents INTEGER NOT NULL,
+  montant_original_cents INTEGER NOT NULL DEFAULT 0,
+  no_cheque TEXT,
+  date TEXT NOT NULL,
+  statut TEXT NOT NULL DEFAULT 'encaisse',
+  dossier_ref TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  cree_le TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Recouvrement : chèques NSF et prélèvements/paiements Stripe refusés.
+-- Règle maison : un chèque refusé ne se règle JAMAIS par un autre chèque TD.
+-- statut ∈ { ouvert, promesse, recupere, radie }
+-- mode_reglement ∈ { cash, depot_ginette, interac, compte_perso, cheque_mois_suivant }
+CREATE TABLE IF NOT EXISTS paiements_refuses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL DEFAULT 'cheque_nsf',      -- cheque_nsf | stripe_echec
+  client_nom TEXT NOT NULL,
+  client_tel TEXT,
+  client_courriel TEXT,
+  user_id INTEGER,
+  financement_ref TEXT,
+  montant_cents INTEGER NOT NULL,
+  frais_cents INTEGER NOT NULL DEFAULT 0,
+  raison TEXT NOT NULL DEFAULT '',
+  no_cheque TEXT,
+  date_refus TEXT NOT NULL,
+  statut TEXT NOT NULL DEFAULT 'ouvert',
+  mode_reglement TEXT CHECK (mode_reglement IN ('cash','depot_ginette','interac','compte_perso','cheque_mois_suivant') OR mode_reglement IS NULL),
+  regle_le TEXT,
+  promesse_note TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  stripe_event TEXT UNIQUE,
+  cree_le TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 // Migration douce : ajoute `fournisseur` aux bases créées avant ce champ.
 try { db.exec("ALTER TABLE products ADD COLUMN fournisseur TEXT NOT NULL DEFAULT ''"); } catch (e) {}
+// Migrations douces CRM : coordonnées et notes sur la fiche client.
+try { db.exec("ALTER TABLE users ADD COLUMN tel TEXT NOT NULL DEFAULT ''"); } catch (e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN adresse TEXT NOT NULL DEFAULT ''"); } catch (e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN note TEXT NOT NULL DEFAULT ''"); } catch (e) {}
 
 export default db;
 export { DB_PATH };

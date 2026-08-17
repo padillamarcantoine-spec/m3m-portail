@@ -3,13 +3,19 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { estClientExistant, trouverClientParCourriel, creerDemandeFinancement, abonnementsClient, facturesClient } from '../perfex.js';
+import { estClientExistant, trouverClientParCourriel, creerDemandeFinancement, abonnementsClient, facturesClient, perfexConfigured } from '../perfex.js';
 import { calculerMensualite, creerLienConnexionBancaire, stripeConfigured } from '../financement.js';
 import { repondre, historique, iaConfigured } from '../agent.js';
 import { notifierMagasin } from '../integrations.js';
 
 const router = express.Router();
 const nowFr = () => { const m = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre']; const d = new Date(); return `${d.getDate()} ${m[d.getMonth()]} ${d.getFullYear()}`; };
+// Accepte les montants tapés « à la québécoise » : « 3 285,50 $ », « 3000$ », espaces insécables, etc.
+function montantEnNombre(v) {
+  if (typeof v === 'number') return v;
+  const s = String(v || '').replace(/[\s  $]/g, '').replace(',', '.');
+  return parseFloat(s);
+}
 function requireAdmin(req, res, next) { if (!req.session.adminUnlocked) return res.status(401).json({ error: 'Console verrouillée' }); next(); }
 function requireClient(req, res, next) { if (!req.session.userId) return res.status(401).json({ error: 'Non connecté' }); next(); }
 
@@ -17,54 +23,88 @@ function requireClient(req, res, next) { if (!req.session.userId) return res.sta
 //  FINANCEMENT MAISON
 // =====================================================================
 
+// Bornes communes (validées côté serveur — le client ne peut pas les contourner).
+function validerMontantMois(montantBrut, nMoisBrut) {
+  const montant = montantEnNombre(montantBrut);
+  if (!Number.isFinite(montant) || montant < 100 || montant > 50000)
+    return { erreur: 'Le montant doit être entre 100 $ et 50 000 $.' };
+  const mois = parseInt(nMoisBrut, 10);
+  if (!Number.isInteger(mois) || mois < 3 || mois > 60)
+    return { erreur: 'La durée doit être entre 3 et 60 mois.' };
+  return { cents: Math.round(montant * 100), mois };
+}
+
 // Étape A — le client vérifie son admissibilité + obtient sa simulation.
 router.post('/financement/simuler', (req, res) => {
-  const montant = parseFloat(req.body?.montant);
-  const nMois = parseInt(req.body?.nMois, 10) || 18;
-  if (!montant || montant < 100 || montant > 50000) return res.status(400).json({ error: 'Le montant doit être entre 100 $ et 50 000 $.' });
-  const calc = calculerMensualite(Math.round(montant * 100), nMois);
-  res.json(calc);
+  const v = validerMontantMois(req.body?.montant, req.body?.nMois ?? 18);
+  if (v.erreur) return res.status(400).json({ error: v.erreur });
+  res.json(calculerMensualite(v.cents, v.mois));
 });
 
 // Étape B — le client soumet sa demande. On vérifie qu'il est client EXISTANT (Perfex).
 router.post('/financement/demande', async (req, res) => {
-  const { nom, courriel, tel, item, montant, nMois } = req.body || {};
-  if (!nom?.trim() || !courriel?.trim() || !item?.trim())
-    return res.status(400).json({ error: 'Nom, courriel et item requis.' });
+  try {
+    const { nom, courriel, tel, item, montant, nMois } = req.body || {};
+    if (!nom?.trim() || !courriel?.trim() || !item?.trim())
+      return res.status(400).json({ error: 'Nom, courriel et item requis.' });
+    const v = validerMontantMois(montant, nMois ?? 18);
+    if (v.erreur) return res.status(400).json({ error: v.erreur });
 
-  const montantNum = parseFloat(montant) || 0;
-  if (montantNum && (montantNum < 100 || montantNum > 50000)) return res.status(400).json({ error: 'Le montant doit être entre 100 $ et 50 000 $.' });
-  const existant = await estClientExistant(courriel.trim());
-  const mois = parseInt(nMois, 10) || 18;
-  const cents = Math.round(montantNum * 100);
-  const calc = calculerMensualite(cents || 100000, mois);
+    let existant;
+    try {
+      existant = await estClientExistant(courriel.trim());
+    } catch (e) {
+      // Panne du CRM ≠ « nouveau client » : on ne refuse personne sur une erreur technique.
+      return res.status(503).json({ error: 'Impossible de vérifier votre dossier pour le moment — réessayez dans quelques minutes ou textez-nous au 514-609-1239.' });
+    }
+    if (!existant && !perfexConfigured()) {
+      // CRM pas encore branché : un compte créé sur le portail compte comme client existant
+      // (sinon, en démo, tout le monde sauf marie-eve@exemple.ca frappe un mur).
+      existant = !!db.prepare('SELECT id FROM users WHERE courriel = ?').get(courriel.trim().toLowerCase());
+    }
+    const calc = calculerMensualite(v.cents, v.mois);
 
-  const ref = 'FIN-' + crypto.randomBytes(5).toString('hex').toUpperCase();
-  const r = db.prepare(`INSERT INTO financements (ref,user_id,courriel,nom,tel,item,montant_cents,n_mois,mensualite_cents,statut)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(ref, req.session.userId || null, courriel.trim(), nom.trim(), tel?.trim() || '', item.trim(), cents, mois, calc.mensualiteCents, existant ? 'demande' : 'refuse_nouveau');
-  const fid = r.lastInsertRowid;
-  const step = db.prepare('INSERT INTO financement_etapes (financement_id,label,quand,fait) VALUES (?,?,?,?)');
-  step.run(fid, 'Demande reçue', nowFr(), 1);
+    const ref = 'FIN-' + crypto.randomBytes(5).toString('hex').toUpperCase();
+    const r = db.prepare(`INSERT INTO financements (ref,user_id,courriel,nom,tel,item,montant_cents,n_mois,mensualite_cents,statut)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(ref, req.session.userId || null, courriel.trim(), nom.trim(), tel?.trim() || '', item.trim(), v.cents, v.mois, calc.mensualiteCents, existant ? 'demande' : 'refuse_nouveau');
+    const fid = r.lastInsertRowid;
+    db.prepare('INSERT INTO financement_etapes (financement_id,label,quand,fait) VALUES (?,?,?,1)').run(fid, 'Demande reçue', nowFr());
 
-  // Enregistre la piste dans Perfex (CRM = source de vérité).
-  await creerDemandeFinancement({ nom: nom.trim(), courriel: courriel.trim(), tel, item, dejaClient: existant });
-  await notifierMagasin({ sujet: `Financement maison — ${ref}`, message: `${nom} (${courriel}) — ${item} — ${existant ? 'CLIENT EXISTANT' : 'NOUVEAU (dépôt 50% requis)'}` });
+    // Enregistre la piste dans Perfex (CRM = source de vérité) + avise le magasin.
+    await creerDemandeFinancement({ nom: nom.trim(), courriel: courriel.trim(), tel, item, dejaClient: existant }).catch(() => {});
+    await notifierMagasin({ sujet: `Financement maison — ${ref}`, message: `${nom} (${courriel}) — ${item} — ${existant ? 'CLIENT EXISTANT' : 'NOUVEAU (dépôt 50% requis)'}` }).catch(() => {});
 
-  if (!existant) {
-    return res.json({ ok: true, ref, existant: false,
-      message: `Le financement maison est réservé à nos clients existants. Comme premier achat, un dépôt minimum de 50 % (après taxes) est requis — passez nous voir en magasin ou textez le 514-609-1239 et on s'occupe de vous.` });
+    if (!existant) {
+      return res.json({ ok: true, existant: false,
+        message: `Le financement maison est réservé à nos clients existants. Comme premier achat, un dépôt minimum de 50 % (après taxes) est requis — passez nous voir en magasin ou textez le 514-609-1239 et on s'occupe de vous.` });
+    }
+    res.json({ ok: true, ref, existant: true, financementId: fid, calcul: calc });
+  } catch (e) {
+    console.error('[financement/demande]', e.message);
+    res.status(500).json({ error: 'Erreur inattendue — réessayez ou contactez-nous.' });
   }
-  res.json({ ok: true, ref, existant: true, financementId: fid, calcul: calc });
 });
 
 // Étape C — générer le lien de connexion bancaire (1,15 $ → capture PAD).
+// Garde d'état : seuls les dossiers admissibles avancent (un refus « nouveau client »
+// ne peut PAS contourner le dépôt de 50 % en appelant cette route directement).
 router.post('/financement/:ref/connexion', async (req, res) => {
-  const f = db.prepare('SELECT * FROM financements WHERE ref = ?').get(req.params.ref);
-  if (!f) return res.status(404).json({ error: 'Financement introuvable' });
-  const lien = await creerLienConnexionBancaire({ courriel: f.courriel, nom: f.nom, financementId: f.ref });
-  db.prepare("UPDATE financements SET statut='lien_envoye', stripe_session=? WHERE id=?").run(lien.sessionId || '', f.id);
-  db.prepare('INSERT INTO financement_etapes (financement_id,label,quand,fait) VALUES (?,?,?,1)').run(f.id, 'Lien de connexion bancaire envoyé', nowFr());
-  res.json({ ok: true, url: lien.url, simulation: !!lien.simulation });
+  try {
+    const f = db.prepare('SELECT * FROM financements WHERE ref = ?').get(req.params.ref);
+    if (!f) return res.status(404).json({ error: 'Financement introuvable' });
+    if (!['demande', 'lien_envoye'].includes(f.statut))
+      return res.status(409).json({ error: 'Ce dossier ne peut pas recevoir de lien de connexion (statut : ' + f.statut + ').' });
+    // Idempotent : si un lien existe déjà, on le redonne sans dupliquer l'étape.
+    const dejaEnvoye = f.statut === 'lien_envoye';
+    const lien = await creerLienConnexionBancaire({ courriel: f.courriel, nom: f.nom, financementId: f.ref });
+    db.prepare("UPDATE financements SET statut='lien_envoye', stripe_session=? WHERE id=?").run(lien.sessionId || f.stripe_session || '', f.id);
+    if (!dejaEnvoye)
+      db.prepare('INSERT INTO financement_etapes (financement_id,label,quand,fait) VALUES (?,?,?,1)').run(f.id, 'Lien de connexion bancaire envoyé', nowFr());
+    res.json({ ok: true, url: lien.url, simulation: !!lien.simulation });
+  } catch (e) {
+    console.error('[financement/connexion]', e.message);
+    res.status(500).json({ error: 'Impossible de générer le lien pour le moment — réessayez.' });
+  }
 });
 
 // Suivi — état complet d'un financement (pour l'écran client).
@@ -94,6 +134,8 @@ router.post('/financement/:ref/confirmer-demo', (req, res) => {
   if (process.env.NODE_ENV === 'production') return res.status(404).json({ error: 'Indisponible' });
   const f = db.prepare('SELECT * FROM financements WHERE ref = ?').get(req.params.ref);
   if (!f) return res.status(404).json({ error: 'Introuvable' });
+  if (!['demande', 'lien_envoye', 'banque_connectee'].includes(f.statut))
+    return res.status(409).json({ error: 'Statut incompatible (' + f.statut + ').' });
   db.prepare("UPDATE financements SET statut='actif' WHERE id=?").run(f.id);
   const step = db.prepare('INSERT INTO financement_etapes (financement_id,label,quand,fait) VALUES (?,?,?,1)');
   step.run(f.id, 'Compte bancaire connecté et confirmé', nowFr());

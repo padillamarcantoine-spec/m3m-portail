@@ -51,8 +51,10 @@ export async function trouverClientParCourriel(courriel) {
     const c = list.find(x => (x.email || '').toLowerCase() === courriel.toLowerCase()) || list[0] || null;
     return c ? { id: c.userid || c.id, company: c.company, email: c.email, phonenumber: c.phonenumber, existing: true } : null;
   } catch (e) {
+    // Une panne du CRM n'est PAS « client inconnu » : on relance pour que la route
+    // réponde « réessayez » au lieu de refuser un vrai client existant.
     console.error('[Perfex] recherche client échec:', e.message);
-    return null;
+    throw new Error('Perfex inaccessible');
   }
 }
 

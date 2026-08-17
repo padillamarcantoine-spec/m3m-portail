@@ -11,9 +11,9 @@ import { PRODUCTS } from './catalogue-data.js';
 const FORCE = process.argv.includes('--force');
 
 const STORES = [
-  { id: 1, nom: 'Meubles Trois Mousquetaires', court: 'Trois Mousquetaires', init: 'M3M', contact: 'Marie-Ève', point: '#c89b3c' },
-  { id: 2, nom: 'Matelas Dépôt', court: 'Matelas Dépôt', init: 'MD', contact: 'Karim', point: '#6f86b0' },
-  { id: 3, nom: 'Électro Marpad', court: 'Électro Marpad', init: 'EM', contact: 'Sophie', point: '#7c8a4f' }
+  { id: 1, nom: 'Meubles Trois Mousquetaires', court: 'Trois Mousquetaires', init: 'M3M', contact: 'Marc-Antoine', point: '#c89b3c' },
+  { id: 2, nom: 'Matelas Dépôt', court: 'Matelas Dépôt', init: 'MD', contact: 'Équipe Matelas Dépôt', point: '#6f86b0' },
+  { id: 3, nom: 'Électro Marpad', court: 'Électro Marpad', init: 'EM', contact: 'Équipe Électro Marpad', point: '#7c8a4f' }
 ];
 
 const SUPPLIERS = [
@@ -65,7 +65,7 @@ const STOCK = [
 ];
 
 function wipe() {
-  const tables = ['order_history', 'orders', 'stock', 'suppliers', 'products', 'service_steps', 'service_tickets', 'invoices', 'price_requests', 'users', 'stores'];
+  const tables = ['order_history', 'orders', 'stock', 'suppliers', 'products', 'service_steps', 'service_tickets', 'service_historique', 'services', 'invoices', 'price_requests', 'financement_etapes', 'financements', 'paiements_refuses', 'reglements', 'chat_savoir', 'chat_messages', 'users', 'stores'];
   for (const t of tables) db.exec(`DELETE FROM ${t};`);
 }
 
@@ -110,6 +110,27 @@ function seed() {
   insInv.run('F-2503', uid, '12 juillet 2026', 'Chaises Molly (la paire)', 28900, 'a_payer', '');
   insInv.run('F-2467', uid, '3 mai 2026', 'Ensemble chambre Bombay', 328500, 'financement', '6/18');
   insInv.run('F-2418', uid, '2 février 2026', 'Table Mae', 109500, 'payee', '');
+
+  // Recouvrement + règlements de démonstration (le flux complet : chèque déposé → refusé → dossier → règlement permis).
+  db.prepare("UPDATE users SET tel='514-555-0199', adresse='4550, rue Adam, Montréal (QC)' WHERE id=?").run(uid);
+  const dOld = (j) => new Date(Date.now() - j * 86400000).toISOString().slice(0, 10);
+  const insReg = db.prepare(`INSERT INTO reglements (user_id,client_nom,financement_ref,mode,montant_cents,montant_original_cents,no_cheque,date,statut,dossier_ref,note)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+  const insRec = db.prepare(`INSERT INTO paiements_refuses (ref,type,client_nom,client_tel,client_courriel,user_id,financement_ref,montant_cents,frais_cents,raison,no_cheque,date_refus,statut,mode_reglement,regle_le,promesse_note,note)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  // 1. Chèque du mois encaissé normalement (rien à signaler).
+  insReg.run(uid, 'Marie-Ève', '', 'cheque_td', 22885, 22885, '043', dOld(64), 'encaisse', null, 'Versement mensuel — Ensemble chambre Bombay');
+  // 2. Chèque refusé il y a 12 jours → règlement à 0 $ + dossier OUVERT (toutes les infos dedans).
+  insReg.run(uid, 'Marie-Ève', '', 'cheque_td', 0, 22885, '044', dOld(12), 'refuse', 'REC-DEMO01', 'Versement mensuel — Ensemble chambre Bombay');
+  insRec.run('REC-DEMO01', 'cheque_nsf', 'Marie-Ève', '514-555-0199', 'marie-eve@exemple.ca', uid, '', 22885, 1500,
+    'Chèque sans provision (NSF)', '044', dOld(12), 'ouvert', null, null, '', 'Créé depuis le règlement refusé — frais NSF 15 $ ajoutés');
+  // 3. Vieux dossier (52 jours — escaladé) avec promesse de paiement.
+  insRec.run('REC-DEMO02', 'cheque_nsf', 'J. Tremblay', '438-555-0112', '', null, '', 41500, 1500,
+    'Compte fermé', '017', dOld(52), 'promesse', null, null, 'Promet de passer vendredi avec le cash', '');
+  // 4. Prélèvement Stripe refusé, récupéré par dépôt Ginette (règle maison : jamais par chèque TD).
+  insRec.run('REC-DEMO03', 'stripe_echec', 'K. Bouchard', '514-555-0177', '', null, '', 18250, 0,
+    'Provision insuffisante (PAD)', '', dOld(30), 'recupere', 'depot_ginette', '5 août 2026', '', '');
+  insReg.run(null, 'K. Bouchard', '', 'depot_ginette', 18250, 18250, '', dOld(25), 'encaisse', 'REC-DEMO03', 'Règlement du dossier REC-DEMO03');
 
   const t = db.prepare('INSERT INTO service_tickets (ref,user_id,item,descr,photo,statut) VALUES (?,?,?,?,?,?)')
     .run('S-108', uid, 'Fauteuil Madrid — mécanisme inclinable', '« Le mécanisme accroche à mi-course. Photo jointe. »', 'IMG_2043.jpg', 'en_cours');

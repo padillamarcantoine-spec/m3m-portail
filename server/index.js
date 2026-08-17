@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import db from './db.js';
 import api from './routes/api.js';
 import v2 from './routes/v2.js';
+import crm from './routes/crm.js';
 import { webhookHandler } from './routes/stripe-webhook.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,6 +61,7 @@ app.use(['/api/demande-prix', '/api/demande-prix-lot', '/api/demande-financement
 
 app.use('/api', api);
 app.use('/api', v2);
+app.use('/api', crm);
 
 // Static assets (logo, css, js) and pages.
 app.use(express.static(PUBLIC, { extensions: ['html'] }));

@@ -60,6 +60,12 @@ function navFromPath() {
   const seg = decodeURIComponent(location.pathname).split('/').filter(Boolean);
   let route = 'accueil', slug = null;
   if (seg[0] === 'produit' && seg[1]) { route = 'produit'; slug = seg[1]; }
+  else if (seg[0] === 'financement' && seg[1] === 'suivi') {
+    // Retour de Stripe après le 1,15 $ : on mémorise la ref et on réhydrate le suivi.
+    route = 'financement';
+    const id = new URLSearchParams(location.search).get('id');
+    if (id) { try { sessionStorage.setItem('m3m_fin', id); } catch (e) {} }
+  }
   else if (['boutique', 'financement', 'connexion', 'compte', 'selection'].includes(seg[0])) route = seg[0];
   if (route === 'compte' && !S.connecte) route = 'connexion';
   S.route = route; S.slug = slug;
@@ -101,7 +107,21 @@ async function ensureSelection() {
   for (const sl of manquants) { try { const r = await api('/produit/' + encodeURIComponent(sl)); if (r && !r.error) S.cache[sl] = r; } catch (e) {} }
   render();
 }
+async function rehydraterFin() {
+  let ref = null;
+  try { ref = sessionStorage.getItem('m3m_fin'); } catch (e) {}
+  if (!ref || S.fin.e !== 0) return;
+  try {
+    const f = await api('/financement/' + encodeURIComponent(ref));
+    if (!f || f.error) return;
+    const e = f.statut === 'actif' ? 3 : ['lien_envoye', 'banque_connectee'].includes(f.statut) ? 2 : f.statut === 'demande' ? 1 : 0;
+    if (!e) { try { sessionStorage.removeItem('m3m_fin'); } catch (e2) {} return; }
+    Object.assign(S.fin, { e, ref: f.ref, item: f.item, nom: f.nom, statut: f.statut, etapes: f.etapes || [], simulation: f.simulation });
+    render();
+  } catch (e) {}
+}
 function afterNav() {
+  if (S.route === 'financement') rehydraterFin();
   if (S.route === 'boutique') chargerBoutique(true);
   else if (S.route === 'produit') ensureProduit(S.slug);
   else if (S.route === 'selection') ensureSelection();
@@ -113,7 +133,7 @@ function go(route, opts = {}) {
   S.route = route;
   if (opts.slug !== undefined) S.slug = opts.slug;
   if (route === 'produit') S.prix = { e: 0, format: '', nom: '', tel: '', err: false };
-  if (route === 'financement') S.fin = { e: 0, item: '', montant: '', nMois: 18, nom: '', courriel: '', tel: '', ref: '', calcul: null, statut: '', etapes: [], message: '', err: '', url: '' };
+  if (route === 'financement' && ![1, 2].includes(S.fin.e)) S.fin = { e: 0, item: '', montant: '', nMois: 18, nom: '', courriel: '', tel: '', ref: '', calcul: null, statut: '', etapes: [], message: '', err: '', url: '' };
   history.pushState({}, '', urlFor(route, S.slug));
   render(); updateSEO();
   window.scrollTo(0, 0); afterNav();
@@ -448,9 +468,11 @@ function screenFinancement() {
         </div>
         <div style="font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--or-fonce)">Suivi de votre financement</div>
         ${tracker(fin.etapes)}
-        ${fin.e === 1 ? `<button class="btn" style="align-self:flex-start" data-act="fin-connexion">Obtenir mon lien de connexion bancaire</button>` : ''}
+        ${fin.err ? `<div class="err">${esc(fin.err)}</div>` : ''}
+        ${fin.e === 1 ? `<button class="btn" style="align-self:flex-start" data-act="fin-connexion"${fin.busy ? ' disabled' : ''}>${fin.busy ? 'Un instant…' : 'Obtenir mon lien de connexion bancaire'}</button>` : ''}
         ${fin.e === 2 ? `<div style="background:#faf5e7;border:1px solid #d8c89b;border-radius:3px;padding:12px 14px;font-size:13px;color:var(--gris-brun3);line-height:1.55">Un lien de connexion bancaire sécurisé (Stripe) est prêt. Le paiement de <strong>1,15 $</strong> enregistre votre compte pour les prélèvements — la confirmation prend 4 à 5 jours ouvrables.${fin.url ? '' : ' On peut aussi finaliser en magasin ou par texto au 514-609-1239.'}</div>
-          <button class="btn btn-ghost" style="align-self:flex-start" data-act="fin-confirmer-demo">(Démo) Simuler la confirmation bancaire</button>` : ''}
+          ${fin.url && fin.simulation === false ? `<a class="btn" style="align-self:flex-start" href="${esc(fin.url)}" target="_blank" rel="noopener">Ouvrir le lien de connexion bancaire</a>` : ''}
+          ${fin.simulation !== false ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="fin-confirmer-demo">(Démo) Simuler la confirmation bancaire</button>` : ''}` : ''}
         ${fin.e === 3 ? `<div style="background:#f2f4e6;border:1px solid #b9c39a;border-radius:3px;padding:12px 14px;font-size:13px;color:#4d5c2f;line-height:1.55">Votre financement est <strong>actif</strong> — les versements mensuels se feront automatiquement. Suivez tout depuis votre espace client.</div>` : ''}
       </div>`;
   }
@@ -606,7 +628,7 @@ function screenCompte() {
             <button class="btn btn-ghost" data-go="financement">Financement maison</button>
           </div>
         </div>`;
-  } else if (t === 'factures') {  } else if (t === 'factures') {
+  } else if (t === 'factures') {
     const badge = (st) => st === 'payee' ? 'ok' : st === 'a_payer' ? 'attention' : 'fin';
     const label = (f) => f.statut === 'payee' ? 'Payée' : f.statut === 'a_payer' ? 'À payer' : ('Financement — ' + (f.meta || ''));
     const rows = S.factures.map(f => `<div class="card" style="padding:20px 22px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap">
@@ -794,33 +816,43 @@ document.addEventListener('click', async (e) => {
       const g = id => (document.getElementById(id) || {}).value || '';
       Object.assign(S.fin, { item: g('finItem'), montant: g('finMontant'), nMois: g('finMois') || 18, nom: g('finNom'), courriel: g('finCourriel'), tel: g('finTel') });
       if (!S.fin.item.trim() || !S.fin.nom.trim() || !S.fin.courriel.trim()) { S.fin.err = 'Item, nom et courriel sont requis.'; render(); break; }
+      const mNum = parseFloat(String(S.fin.montant || '').replace(/[\s\u00a0\u202f$]/g, '').replace(',', '.'));
+      if (!(mNum >= 100 && mNum <= 50000)) { S.fin.err = 'Entrez un montant entre 100 $ et 50 000 $.'; render(); break; }
+      if (S.fin.busy) break; S.fin.busy = true; S.fin.err = ''; render();
       try {
         const r = await api('/financement/demande', { method: 'POST', body: { nom: S.fin.nom, courriel: S.fin.courriel, tel: S.fin.tel, item: S.fin.item, montant: S.fin.montant, nMois: S.fin.nMois } });
-        if (!r.existant) { S.fin.e = 99; S.fin.message = r.message || ''; S.fin.err = ''; render(); break; }
+        if (S.route !== 'financement') { S.fin.busy = false; break; }
+        if (!r.existant) { S.fin.e = 99; S.fin.message = r.message || ''; S.fin.err = ''; S.fin.busy = false; render(); break; }
+        try { sessionStorage.setItem('m3m_fin', r.ref); } catch (e3) {}
         S.fin.ref = r.ref; S.fin.calcul = r.calcul; S.fin.err = ''; S.fin.e = 1;
         S.fin.etapes = [{ label: 'Demande reçue', quand: '', fait: true }]; render();
-        try { const suivi = await api('/financement/' + encodeURIComponent(r.ref)); S.fin.etapes = suivi.etapes || S.fin.etapes; S.fin.statut = suivi.statut; render(); } catch (e2) {}
-      } catch (err) { S.fin.err = err.message; render(); }
+        try { const suivi = await api('/financement/' + encodeURIComponent(r.ref)); S.fin.etapes = suivi.etapes || S.fin.etapes; S.fin.statut = suivi.statut; } catch (e2) {}
+        S.fin.busy = false; render();
+      } catch (err) { S.fin.err = err.message; S.fin.busy = false; render(); }
       break;
     }
     case 'fin-connexion': {
       try {
+        if (S.fin.busy) break; S.fin.busy = true; S.fin.err = ''; render();
         const r = await api('/financement/' + encodeURIComponent(S.fin.ref) + '/connexion', { method: 'POST' });
-        S.fin.url = r.url; if (r.url && !r.simulation) window.open(r.url, '_blank');
+        S.fin.url = r.url; S.fin.simulation = r.simulation !== false;
+        if (r.url && !r.simulation) window.open(r.url, '_blank'); // best effort — le lien cliquable est rendu de toute façon
         const suivi = await api('/financement/' + encodeURIComponent(S.fin.ref));
-        S.fin.etapes = suivi.etapes || []; S.fin.e = 2; render();
-      } catch (err) { S.fin.err = err.message; render(); }
+        if (S.route !== 'financement') { S.fin.busy = false; break; }
+        S.fin.etapes = suivi.etapes || []; S.fin.e = 2; S.fin.busy = false; render();
+      } catch (err) { S.fin.err = err.message; S.fin.busy = false; render(); }
       break;
     }
     case 'fin-confirmer-demo': {
       try {
+        if (S.fin.busy) break; S.fin.busy = true; S.fin.err = ''; render();
         await api('/financement/' + encodeURIComponent(S.fin.ref) + '/confirmer-demo', { method: 'POST' });
         const suivi = await api('/financement/' + encodeURIComponent(S.fin.ref));
-        S.fin.etapes = suivi.etapes || []; S.fin.e = 3; render();
-      } catch (err) { S.fin.err = err.message; render(); }
+        S.fin.etapes = suivi.etapes || []; S.fin.e = 3; S.fin.busy = false; render();
+      } catch (err) { S.fin.err = err.message; S.fin.busy = false; render(); }
       break;
     }
-    case 'fin-reset': S.fin = { e: 0, item: '', montant: '', nMois: 18, nom: '', courriel: '', tel: '', ref: '', calcul: null, statut: '', etapes: [], message: '', err: '', url: '' }; render(); break;
+    case 'fin-reset': try { sessionStorage.removeItem('m3m_fin'); } catch (e4) {} S.fin = { e: 0, item: '', montant: '', nMois: 18, nom: '', courriel: '', tel: '', ref: '', calcul: null, statut: '', etapes: [], message: '', err: '', url: '' }; render(); break;
 
     case 'connexion': {
       capter();
@@ -867,6 +899,7 @@ document.addEventListener('input', (e) => {
   const map = {
     q: () => S.q = v, prixNom: () => S.prix.nom = v, prixTel: () => S.prix.tel = v,
     finItem: () => S.fin.item = v, finNom: () => S.fin.nom = v, finTel: () => S.fin.tel = v,
+    finMontant: () => S.fin.montant = v, finCourriel: () => S.fin.courriel = v, finMois: () => S.fin.nMois = v,
     ident: () => S.ident = v, mdp: () => S.mdp = v,
     insNom: () => S.insNom = v, insCourriel: () => S.insCourriel = v, insMdp: () => S.insMdp = v,
     srvItem: () => S.srvItem = v, srvDesc: () => S.srvDesc = v,
@@ -880,9 +913,10 @@ document.addEventListener('input', (e) => {
 // Recherche/pagination via le serveur : voir chargerBoutique().
 
 function capter() {
-  ['q','prixNom','prixTel','finItem','finNom','finTel','ident','mdp','insNom','insCourriel','insMdp','srvItem','srvDesc','selNom','selTel']
+  ['q','prixNom','prixTel','finItem','finNom','finTel','finMontant','finCourriel','finMois','ident','mdp','insNom','insCourriel','insMdp','srvItem','srvDesc','selNom','selTel']
     .forEach(id => { const el = document.getElementById(id); if (!el) return;
       const m = { q:'q', prixNom:['prix','nom'], prixTel:['prix','tel'], finItem:['fin','item'], finNom:['fin','nom'], finTel:['fin','tel'],
+        finMontant:['fin','montant'], finCourriel:['fin','courriel'], finMois:['fin','nMois'],
         ident:'ident', mdp:'mdp', insNom:'insNom', insCourriel:'insCourriel', insMdp:'insMdp', srvItem:'srvItem', srvDesc:'srvDesc', selNom:'selNom', selTel:'selTel' }[id];
       if (Array.isArray(m)) S[m[0]][m[1]] = el.value; else S[m] = el.value;
     });
