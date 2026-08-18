@@ -46,7 +46,7 @@ function updateSEO() {
   const p = S.route === 'produit' ? S.cache[S.slug] : null;
   const titres = { accueil: 'Meubles, matelas & électroménagers — Montréal', boutique: 'Boutique — ' + (S.total || '') + ' pièces', financement: 'Financement à votre rythme', connexion: 'Portail client', compte: 'Mon espace', selection: 'Ma sélection' };
   document.title = (p ? p.nom : (titres[S.route] || BASE_TITLE)) + ' | ' + BASE_TITLE;
-  const desc = p ? (p.descr || p.nom) : 'Plus de 500 meubles et électroménagers en salle de montre à Montréal. Demandez votre prix, financez à votre rythme, livraison et installation gant blanc.';
+  const desc = p ? (p.descr || p.nom) : 'Des milliers de meubles et électroménagers en salle de montre à Montréal. Demandez votre prix, financez à votre rythme, livraison et installation gant blanc.';
   const set = (sel, val) => { const el = document.querySelector(sel); if (el && val != null) el.setAttribute('content', val); };
   set('meta[name="description"]', desc);
   set('meta[property="og:title"]', document.title);
@@ -219,7 +219,7 @@ function screenAccueil() {
       <div>
         <div class="eyebrow on-dark" style="margin-bottom:22px">Meubles &amp; électroménagers — Montréal</div>
         <h1 class="serif">Tous pour un <em>chez-vous</em>.</h1>
-        <p>Plus de 500 meubles et électroménagers choisis avec soin, en salle de montre à Montréal. Demandez votre prix en quelques clics, financez à votre rythme — livraison et installation gant blanc incluses.</p>
+        <p>Des milliers de meubles et électroménagers choisis avec soin, en salle de montre à Montréal. Demandez votre prix en quelques clics, financez à votre rythme — livraison et installation gant blanc incluses.</p>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:38px">
           <button class="btn btn-or" data-go="boutique">Découvrir la boutique</button>
           <button class="btn btn-ghost-dark" data-go="financement">Options de financement</button>
@@ -230,7 +230,7 @@ function screenAccueil() {
           <img src="/assets/logo.png" alt="" style="width:min(210px,58%);display:block">
           <div style="width:44px;height:1px;background:var(--laiton)"></div>
           <div style="text-align:center;display:flex;flex-direction:column;gap:6px">
-            <span style="font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:var(--gris-brun2);font-weight:500">Plus de 500 pièces en salle de montre</span>
+            <span style="font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:var(--gris-brun2);font-weight:500">Des milliers de pièces en salle de montre</span>
             <span style="font-family:var(--serif);font-style:italic;font-size:19px;color:var(--encre)">2485, rue Leclaire — Montréal</span>
           </div>
         </div>
