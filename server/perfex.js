@@ -21,7 +21,12 @@ export const perfexConfigured = () => has(process.env.PERFEX_URL) && has(process
 // PERFEX_API_URL peut surcharger l'URL si le module est ailleurs.
 const base = () => (process.env.PERFEX_URL || '').replace(/\/+$/, '');
 const apiUrl = () => process.env.PERFEX_API_URL || (base() + '/modules/m3m_api/api.php');
-const headers = () => ({ 'Authorization': 'Bearer ' + (process.env.PERFEX_TOKEN || ''), 'Content-Type': 'application/json' });
+const headers = () => ({
+  // En-tête personnalisé (jamais supprimé par Apache) + Bearer en repli.
+  'X-M3M-Token': process.env.PERFEX_TOKEN || '',
+  'Authorization': 'Bearer ' + (process.env.PERFEX_TOKEN || ''),
+  'Content-Type': 'application/json',
+});
 
 // pf(action, { query, method, body }) → appelle le pont et renvoie le JSON.
 async function pf(action, opts = {}) {
