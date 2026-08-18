@@ -16,15 +16,25 @@
 const has = (v) => typeof v === 'string' && v.trim().length > 0;
 export const perfexConfigured = () => has(process.env.PERFEX_URL) && has(process.env.PERFEX_TOKEN);
 
+// Le pont « M3M API » (module Perfex maison) expose les données via
+// <PERFEX_URL>/modules/m3m_api/api.php?action=… , protégé par un jeton Bearer.
+// PERFEX_API_URL peut surcharger l'URL si le module est ailleurs.
 const base = () => (process.env.PERFEX_URL || '').replace(/\/+$/, '');
-const headers = () => ({ 'authtoken': process.env.PERFEX_TOKEN, 'Content-Type': 'application/json' });
+const apiUrl = () => process.env.PERFEX_API_URL || (base() + '/modules/m3m_api/api.php');
+const headers = () => ({ 'Authorization': 'Bearer ' + (process.env.PERFEX_TOKEN || ''), 'Content-Type': 'application/json' });
 
-async function pf(path, opts = {}) {
-  const url = base() + '/api' + path;
-  const r = await fetch(url, { method: opts.method || 'GET', headers: headers(), body: opts.body ? JSON.stringify(opts.body) : undefined });
+// pf(action, { query, method, body }) → appelle le pont et renvoie le JSON.
+async function pf(action, opts = {}) {
+  const u = new URL(apiUrl());
+  u.searchParams.set('action', action);
+  for (const [k, v] of Object.entries(opts.query || {})) u.searchParams.set(k, v);
+  const r = await fetch(u.toString(), {
+    method: opts.method || 'GET', headers: headers(),
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
   const txt = await r.text();
   let data; try { data = JSON.parse(txt); } catch { data = txt; }
-  if (!r.ok) throw new Error(`Perfex ${r.status}: ${typeof data === 'string' ? data.slice(0, 200) : JSON.stringify(data).slice(0, 200)}`);
+  if (!r.ok) throw new Error(`M3M API ${r.status}: ${typeof data === 'string' ? data.slice(0, 200) : JSON.stringify(data).slice(0, 200)}`);
   return data;
 }
 
@@ -44,12 +54,9 @@ export async function trouverClientParCourriel(courriel) {
     return courriel && courriel.toLowerCase() === DEMO_CLIENT.email ? { ...DEMO_CLIENT } : null;
   }
   try {
-    // L'API Perfex permet la recherche de clients ; selon la version, l'endpoint
-    // est /customers/search/{terme} ou /customers avec filtre. On tente la recherche.
-    const res = await pf('/customers/search/' + encodeURIComponent(courriel));
-    const list = Array.isArray(res) ? res : (res?.data || []);
-    const c = list.find(x => (x.email || '').toLowerCase() === courriel.toLowerCase()) || list[0] || null;
-    return c ? { id: c.userid || c.id, company: c.company, email: c.email, phonenumber: c.phonenumber, existing: true } : null;
+    const c = await pf('customer_by_email', { query: { email: courriel } });
+    if (!c || c.existing === false) return null;
+    return { id: c.id, company: c.company, email: c.email, phonenumber: c.phonenumber, existing: true };
   } catch (e) {
     // Une panne du CRM n'est PAS « client inconnu » : on relance pour que la route
     // réponde « réessayez » au lieu de refuser un vrai client existant.
@@ -67,9 +74,8 @@ export async function estClientExistant(courriel) {
 export async function infosClient(id) {
   if (!perfexConfigured()) return { ...DEMO_CLIENT };
   try {
-    const c = await pf('/customers/' + encodeURIComponent(id));
-    const d = c?.data || c;
-    return { id: d.userid || d.id, company: d.company, email: d.email, phonenumber: d.phonenumber };
+    const d = await pf('customer', { query: { id } });
+    return { id: d.id, company: d.company, email: d.email, phonenumber: d.phonenumber, contact: d.contact };
   } catch (e) { console.error('[Perfex] infosClient échec:', e.message); return null; }
 }
 
@@ -85,18 +91,19 @@ export async function facturesClient(clientId) {
     ];
   }
   try {
-    const res = await pf('/invoices/customer/' + encodeURIComponent(clientId)).catch(() => pf('/invoices'));
-    const list = Array.isArray(res) ? res : (res?.data || []);
+    const res = await pf('invoices', { query: { clientid: clientId } });
+    const list = res?.data || [];
+    const fr = (v) => Number(v).toLocaleString('fr-CA', { minimumFractionDigits: 2 }) + ' $';
     return list.map(inv => ({
-      no: inv.formatted_number || ('F-' + inv.id), date: inv.date, desc: inv.subject || 'Facture',
-      montant: (inv.total ? Number(inv.total).toLocaleString('fr-CA', { minimumFractionDigits: 2 }) : '0,00') + ' $',
-      statut: mapStatutFacture(inv.status), meta: ''
+      no: inv.numero, date: inv.date, desc: 'Facture ' + inv.numero,
+      montant: fr(inv.total), solde: fr(inv.solde),
+      statut: mapStatutFacture(inv.statut), meta: ''
     }));
   } catch (e) { console.error('[Perfex] facturesClient échec:', e.message); return []; }
 }
 function mapStatutFacture(s) {
-  // Perfex : 1 unpaid, 2 paid, 3 partially paid, 4 overdue, 5 cancelled, 6 draft
-  return ({ 2: 'payee', 3: 'financement' })[s] || 'a_payer';
+  // Le pont renvoie déjà : impayee / payee / partielle / en_retard / annulee.
+  return ({ payee: 'payee', partielle: 'financement', en_retard: 'a_payer', annulee: 'annulee' })[s] || 'a_payer';
 }
 
 // =====================================================================
@@ -112,12 +119,11 @@ export async function abonnementsClient(clientId) {
     }];
   }
   try {
-    const res = await pf('/subscriptions/customer/' + encodeURIComponent(clientId)).catch(() => pf('/subscriptions'));
-    const list = Array.isArray(res) ? res : (res?.data || []);
+    const res = await pf('subscriptions', { query: { clientid: clientId } });
+    const list = res?.data || [];
     return list.map(s => ({
-      id: s.id, nom: s.name || s.subject || 'Financement', statut: (s.status || '').toLowerCase() || 'actif',
-      mensualite: s.amount ? Number(s.amount).toLocaleString('fr-CA', { minimumFractionDigits: 2 }) + ' $' : '',
-      taux: '29,99 %', prochain: s.next_billing_cycle || '', compte: ''
+      id: s.id, nom: s.name || 'Financement', statut: (s.status || '').toLowerCase() || 'actif',
+      mensualite: '', taux: '29,99 %', prochain: s.next_billing_cycle || '', compte: ''
     }));
   } catch (e) { console.error('[Perfex] abonnementsClient échec:', e.message); return []; }
 }
@@ -130,11 +136,10 @@ export async function creerDemandeFinancement({ nom, courriel, tel, item, dejaCl
     return { simulation: true, ok: true };
   }
   try {
-    // On crée un « lead » Perfex avec les infos ; ton équipe le traite dans le CRM.
-    await pf('/leads', { method: 'POST', body: {
+    // On crée une « piste » (lead) dans Perfex ; ton équipe la traite dans le CRM.
+    await pf('create_lead', { method: 'POST', body: {
       name: nom, email: courriel, phonenumber: tel,
       description: `Demande de financement maison — item: ${item} — ${dejaClient ? 'client existant' : 'nouveau client'}`,
-      source: 1, status: 1
     }});
     return { simulation: false, ok: true };
   } catch (e) { console.error('[Perfex] creerDemandeFinancement échec:', e.message); return { ok: false, error: e.message }; }
