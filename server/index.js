@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import db from './db.js';
+import { SqliteStore } from './session-store.js';
 import api from './routes/api.js';
 import v2 from './routes/v2.js';
 import crm from './routes/crm.js';
@@ -36,6 +37,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), webho
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 app.use(session({
+  store: new SqliteStore(), // sessions en base → survivent aux redéploiements
   secret: sessionSecret(),
   resave: false,
   saveUninitialized: false,

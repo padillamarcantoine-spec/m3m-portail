@@ -590,7 +590,7 @@ function screenCompte() {
   let contenu = '';
   if (t === 'apercu') {
     const fin = (S.financements || []).find(f => f.statut === 'actif') || (S.financements || [])[0];
-    const aPayer = (S.factures || []).find(f => f.statut === 'a_payer');
+    const aPayer = (S.factures || []).find(f => f.statut === 'a_payer' || f.statut === 'en_retard');
     const srv = (S.service || [])[0];
     const cards = [];
     if (fin) {
@@ -636,25 +636,27 @@ function screenCompte() {
           </div>
         </div>`;
   } else if (t === 'factures') {
-    const badge = (st) => st === 'payee' ? 'ok' : st === 'a_payer' ? 'attention' : 'fin';
+    const badge = (st) => st === 'payee' ? 'ok' : (st === 'a_payer' || st === 'en_retard') ? 'attention' : 'fin';
     const label = (f) => f.statut === 'payee' ? 'Payée' : f.statut === 'a_payer' ? 'À payer'
-      : f.statut === 'annulee' ? 'Annulée' : ('Financement — ' + (f.meta || ''));
+      : f.statut === 'en_retard' ? 'En retard' : f.statut === 'annulee' ? 'Annulée' : ('Financement — ' + (f.meta || ''));
     // Payable en ligne = facture locale de l'app (avec id). Payer une VRAIE facture
     // du CRM en ligne viendra avec Stripe ; en attendant, on affiche les modes de règlement.
     const payable = (f) => f.source !== 'perfex' && f.id != null;
+    const aRegler = (f) => f.statut === 'a_payer' || f.statut === 'en_retard';
     const montantHtml = (f) => `<div style="text-align:right">
         <span class="serif" style="font-weight:600;font-size:24px">${esc(f.montant)}</span>
-        ${f.solde && f.statut !== 'payee' && f.solde !== f.montant ? `<div style="font-size:12px;color:var(--gris-brun2);margin-top:2px">Solde : ${esc(f.solde)}</div>` : ''}
+        ${f.solde && f.statut !== 'payee' && f.statut !== 'annulee' && f.solde !== f.montant ? `<div style="font-size:12px;color:var(--gris-brun2);margin-top:2px">Solde : ${esc(f.solde)}</div>` : ''}
       </div>`;
     const rows = S.factures.map(f => `<div class="card" style="padding:20px 22px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap">
       <div style="min-width:200px">
         <div style="font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--gris-brun2)">${esc(f.no)} — ${esc(f.date)}</div>
         <div style="font-size:15px;font-weight:600;margin-top:5px">${esc(f.desc)}</div>
+        ${f.statut === 'en_retard' && f.echeance ? `<div style="font-size:11.5px;color:#b4632a;margin-top:3px">Échéance dépassée : ${esc(f.echeance)}</div>` : ''}
       </div>
       <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
         ${montantHtml(f)}
         <span class="badge ${badge(f.statut)}">${esc(label(f))}</span>
-        ${f.statut === 'a_payer'
+        ${aRegler(f)
           ? (payable(f)
               ? `<button class="btn" style="padding:10px 20px;font-size:13px" data-payer="${f.id}">Payer</button>`
               : `<span style="font-size:12px;color:var(--gris-brun2);text-align:right;max-width:160px;line-height:1.45">À régler en magasin, par Interac ou virement</span>`)

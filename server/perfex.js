@@ -36,10 +36,13 @@ async function pf(action, opts = {}) {
   const r = await fetch(u.toString(), {
     method: opts.method || 'GET', headers: headers(),
     body: opts.body ? JSON.stringify(opts.body) : undefined,
+    signal: AbortSignal.timeout(8000), // borne dure : ne jamais rester pendante sur un pont figé
   });
   const txt = await r.text();
   let data; try { data = JSON.parse(txt); } catch { data = txt; }
   if (!r.ok) throw new Error(`M3M API ${r.status}: ${typeof data === 'string' ? data.slice(0, 200) : JSON.stringify(data).slice(0, 200)}`);
+  // Un 200 avec un corps non-JSON (tronqué, page d'erreur HTML) n'est PAS un succès.
+  if (typeof data !== 'object' || data === null) throw new Error('M3M API: réponse invalide (JSON attendu)');
   return data;
 }
 
@@ -61,7 +64,12 @@ export async function trouverClientParCourriel(courriel) {
   try {
     const c = await pf('customer_by_email', { query: { email: courriel } });
     if (!c || c.existing === false) return null;
-    return { id: c.id, company: c.company, email: c.email, phonenumber: c.phonenumber, existing: true };
+    // Courriel présent sur plusieurs dossiers CRM → on NE lie PAS automatiquement.
+    if (c.ambiguous) return { ambiguous: true };
+    return {
+      id: c.id, company: c.company, email: c.email,
+      phonenumber: c.phonenumber, phone_contact: c.phone_contact, existing: true,
+    };
   } catch (e) {
     // Une panne du CRM n'est PAS « client inconnu » : on relance pour que la route
     // réponde « réessayez » au lieu de refuser un vrai client existant.
@@ -100,15 +108,23 @@ export async function facturesClient(clientId) {
     const list = res?.data || [];
     const fr = (v) => Number(v).toLocaleString('fr-CA', { minimumFractionDigits: 2 }) + ' $';
     return list.map(inv => ({
-      no: inv.numero, date: inv.date, desc: 'Facture ' + inv.numero,
+      no: inv.numero, date: inv.date, echeance: inv.echeance || '', desc: 'Facture ' + inv.numero,
       montant: fr(inv.total), solde: fr(inv.solde),
       statut: mapStatutFacture(inv.statut), meta: ''
     }));
-  } catch (e) { console.error('[Perfex] facturesClient échec:', e.message); return []; }
+  } catch (e) {
+    // Comme trouverClientParCourriel : on RELANCE (au lieu de renvoyer []) pour que la
+    // route réponde 503 « réessayez ». Un client lié ne doit jamais voir « aucune
+    // facture » alors que le CRM est seulement indisponible.
+    console.error('[Perfex] facturesClient échec:', e.message);
+    throw new Error('Perfex inaccessible');
+  }
 }
 function mapStatutFacture(s) {
-  // Le pont renvoie déjà : impayee / payee / partielle / en_retard / annulee.
-  return ({ payee: 'payee', partielle: 'financement', en_retard: 'a_payer', annulee: 'annulee' })[s] || 'a_payer';
+  // Le pont renvoie : impayee / payee / partielle / en_retard / annulee.
+  // « partielle » = facture partiellement payée (solde à régler), PAS un plan de
+  // financement maison → traitée comme « à payer ». « en_retard » reste distinct.
+  return ({ payee: 'payee', partielle: 'a_payer', en_retard: 'en_retard', annulee: 'annulee' })[s] || 'a_payer';
 }
 
 // =====================================================================

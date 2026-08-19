@@ -9,8 +9,24 @@ const router = express.Router();
 
 // ---- helpers --------------------------------------------------------
 const money = (cents) => (cents / 100).toLocaleString('fr-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' $';
-// Chiffres seulement (comparaison de téléphones robuste au formatage).
+// Chiffres seulement (pour le stockage).
 const digits = (s) => String(s || '').replace(/\D/g, '');
+// Numéro NANP à 10 chiffres comparable, extrait d'un champ CRM en texte libre :
+// on ne garde que le PREMIER numéro (coupe avant « poste/ext » ou un 2e numéro) et
+// on retire l'indicatif pays « 1 ». Évite les faux négatifs (extensions, 2 numéros).
+function tel10(v) {
+  const premier = String(v || '').split(/poste|\bext\b|,|\/|;/i)[0];
+  let d = premier.replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '1') d = d.slice(1);
+  return d.slice(0, 10);
+}
+// Le téléphone fourni correspond-il au dossier CRM ? On accepte le numéro au niveau
+// CLIENT ou au niveau CONTACT (en B2C, le numéro est souvent sur le contact).
+function telMatchCRM(telFourni, pc) {
+  const c = tel10(telFourni);
+  if (c.length !== 10) return false;
+  return tel10(pc.phonenumber) === c || tel10(pc.phone_contact) === c;
+}
 const nowFr = () => {
   const mois = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
   const d = new Date();
@@ -118,14 +134,16 @@ router.post('/auth/inscription', async (req, res) => {
   if (perfexConfigured()) {
     try {
       const pc = await trouverClientParCourriel(courrielN);
-      if (pc && pc.id && digits(tel).length >= 10 &&
-          digits(pc.phonenumber).slice(-10) === digits(tel).slice(-10)) {
+      // pc.ambiguous → le courriel est sur plusieurs dossiers CRM : on NE lie PAS
+      // automatiquement (éviterait de pointer le mauvais dossier) — vérif manuelle.
+      if (pc && !pc.ambiguous && pc.id && telMatchCRM(tel, pc)) {
         perfexId = Number(pc.id);
         lieCrm = true;
       }
     } catch (e) {
-      // CRM injoignable : on crée quand même le compte local (sans liaison). Le client
-      // pourra être relié plus tard ; il ne verra pas de données d'un autre par erreur.
+      // CRM injoignable : on crée quand même le compte local (sans liaison). La
+      // re-liaison sera retentée automatiquement à la prochaine connexion (voir
+      // /auth/connexion). Aucun risque de voir les données d'un autre.
       console.error('[inscription] liaison Perfex impossible:', e.message);
     }
   }
@@ -137,13 +155,24 @@ router.post('/auth/inscription', async (req, res) => {
   res.json({ ok: true, nom: nom.trim(), lieCrm });
 });
 
-router.post('/auth/connexion', (req, res) => {
+router.post('/auth/connexion', async (req, res) => {
   const { courriel, mdp } = req.body || {};
   if (!courriel || !mdp) return res.status(400).json({ error: 'Courriel et mot de passe requis.' });
   const u = db.prepare('SELECT * FROM users WHERE courriel = ?').get(courriel.toLowerCase());
   if (!u || !bcrypt.compareSync(mdp, u.mdp_hash))
     return res.status(401).json({ error: 'Courriel ou mot de passe incorrect.' });
   req.session.userId = u.id;
+  // Re-liaison au CRM si le compte n'a pas encore d'id (ex. CRM injoignable au moment
+  // de l'inscription) : on retente avec le téléphone donné à l'inscription. Même
+  // exigence (courriel + téléphone concordant, non ambigu) → aucun risque d'usurpation.
+  if (!u.perfex_id && perfexConfigured() && u.tel) {
+    try {
+      const pc = await trouverClientParCourriel(u.courriel);
+      if (pc && !pc.ambiguous && pc.id && telMatchCRM(u.tel, pc)) {
+        db.prepare('UPDATE users SET perfex_id = ? WHERE id = ?').run(Number(pc.id), u.id);
+      }
+    } catch (e) { console.error('[connexion] re-liaison Perfex impossible:', e.message); }
+  }
   res.json({ ok: true, nom: u.nom });
 });
 
@@ -171,7 +200,7 @@ router.get('/compte/factures', requireClient, async (req, res) => {
     try {
       const reelles = await facturesClient(u.perfex_id);
       return res.json((reelles || []).map(f => ({
-        no: f.no, date: f.date, desc: f.desc,
+        no: f.no, date: f.date, echeance: f.echeance || '', desc: f.desc,
         montant: f.montant, solde: f.solde,
         statut: f.statut, meta: f.meta || '', source: 'perfex'
       })));
