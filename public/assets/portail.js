@@ -424,11 +424,13 @@ function screenProduit() {
 
 // ================= écran : FINANCEMENT =================
 function screenFinancement() {
-  const qr = `<span style="width:88px;height:88px;flex:none;border:1px solid var(--bord3);border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:var(--creme)"><span style="font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--gris-brun2)">CODE QR</span><span style="width:34px;height:34px;background:repeating-linear-gradient(0deg,#c7bba0 0 4px,transparent 4px 8px),repeating-linear-gradient(90deg,#c7bba0 0 4px,transparent 4px 8px)"></span></span>`;
-  const opt = (n, nom, etapes, url, label, note) => `<div class="card" style="padding:28px;display:flex;flex-direction:column;gap:18px">
+  // Vrais codes QR (scannables) vers chaque partenaire de financement — images
+  // intégrées à l'app (public/assets/financement/), aucune dépendance externe.
+  const qrImg = (key, nom) => `<img src="/assets/financement/qr-${key}.png" alt="Code QR — demande ${esc(nom)}" width="92" height="92" style="width:92px;height:92px;flex:none;border:1px solid var(--bord3);border-radius:4px;background:#fff;padding:4px;box-sizing:border-box" loading="lazy">`;
+  const opt = (n, nom, etapes, url, label, note, qrKey) => `<div class="card" style="padding:28px;display:flex;flex-direction:column;gap:18px">
     <div><div style="font-size:10.5px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--or-fonce)">Option 0${n}</div><h3 class="serif" style="margin:8px 0 0;font-size:28px">${nom}</h3></div>
     <div style="display:flex;flex-direction:column">${etapes.map((e,i)=>`<div style="display:flex;gap:14px;padding:11px 0;border-top:1px solid var(--bord4)"><span style="font-family:var(--serif);font-weight:600;font-size:21px;color:var(--laiton);width:20px;flex:none">${i+1}</span><span style="font-size:13.5px;line-height:1.55;color:var(--gris-brun3)">${e}</span></div>`).join('')}</div>
-    <div style="display:flex;align-items:center;gap:16px;margin-top:auto;padding-top:6px">${qr}<span style="font-size:12px;line-height:1.5;color:var(--gris-brun2)">${note}</span></div>
+    <div style="display:flex;align-items:center;gap:16px;margin-top:auto;padding-top:6px">${qrImg(qrKey, nom)}<span style="font-size:12px;line-height:1.5;color:var(--gris-brun2)">${note}</span></div>
     <a href="${url}" target="_blank" rel="noopener" class="btn" style="display:block;text-align:center;text-decoration:none">${label}</a>
   </div>`;
 
@@ -503,9 +505,9 @@ function screenFinancement() {
       </div>
     </div>
     <div class="container" style="padding:22px 24px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:22px">
-      ${opt(1,'Fairstone',['Scannez le code QR ou cliquez le bouton — ou textez « meublestroismousquetaires » au 32472.','Complétez la demande directement sur votre téléphone.','Montrez l\'approbation à notre équipe pour finaliser l\'achat.'],'https://web.fairstone.ca/meublestroismousquetaires/fr','Faire ma demande Fairstone','Scannez avec l\'appareil photo de votre téléphone')}
-      ${opt(2,'Affirm',['Scannez le code QR ou cliquez le bouton pour ouvrir la préqualification.','Complétez la demande sur votre téléphone — quelques minutes suffisent.','Montrez l\'approbation à notre équipe pour finaliser l\'achat.'],'https://www.affirm.ca/apps/prequal/?public_api_key=1TQH39SSET2RG09B&page_type=landing&use_promo=true&locale=fr-CA','Faire ma demande Affirm','Préqualification rapide, directement sur votre téléphone')}
-      ${opt(3,'iFinance',['Scannez le code QR ou cliquez le bouton pour ouvrir la demande.','Sélectionnez « Meubles Trois Mousquetaires — 2485, rue Leclaire », puis complétez la demande.','Montrez l\'approbation à notre équipe pour finaliser l\'achat.'],'https://apply.ifinancecanada.com/20500/new-app/loan-amount','Faire ma demande iFinance','Scannez avec l\'appareil photo de votre téléphone')}
+      ${opt(1,'Fairstone',['Scannez le code QR ou cliquez le bouton — ou textez « meublestroismousquetaires » au 32472.','Complétez la demande directement sur votre téléphone.','Montrez l\'approbation à notre équipe pour finaliser l\'achat.'],'https://web.fairstone.ca/meublestroismousquetaires/fr','Faire ma demande Fairstone','Scannez avec l\'appareil photo de votre téléphone','fairstone')}
+      ${opt(2,'Affirm',['Scannez le code QR ou cliquez le bouton pour ouvrir la préqualification.','Complétez la demande sur votre téléphone — quelques minutes suffisent.','Montrez l\'approbation à notre équipe pour finaliser l\'achat.'],'https://www.affirm.ca/apps/prequal/?public_api_key=1TQH39SSET2RG09B&page_type=landing&use_promo=true&locale=fr-CA','Faire ma demande Affirm','Préqualification rapide, directement sur votre téléphone','affirm')}
+      ${opt(3,'iFinance',['Scannez le code QR ou cliquez le bouton pour ouvrir la demande.','Sélectionnez « Meubles Trois Mousquetaires — 2485, rue Leclaire », puis complétez la demande.','Montrez l\'approbation à notre équipe pour finaliser l\'achat.'],'https://apply.ifinancecanada.com/20500/new-app/loan-amount','Faire ma demande iFinance','Scannez avec l\'appareil photo de votre téléphone','ifinance')}
     </div>
     <div class="container" style="padding:22px 24px clamp(64px,8vw,96px)">
       <div style="background:var(--noir);border-radius:4px;padding:clamp(30px,4.5vw,52px)">

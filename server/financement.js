@@ -36,13 +36,16 @@ async function stripe() {
   }
 }
 
-// Calcule la mensualité d'un financement (amortissement standard, taux mensuel).
+// Calcule la mensualité d'un financement — INTÉRÊT SIMPLE (règle de Marc-Antoine) :
+// 29,99 % du montant PAR ANNÉE, multiplié par le nombre d'années.
+// Ex. 1000 $ sur 3 ans = 1000 × 29,99 % × 3 = 899,70 $ d'intérêts → 1899,70 $ à
+// rembourser → 52,77 $/mois (÷ 36). Les fractions d'année suivent (18 mois = 1,5 an).
 // montantCents = total à financer (après taxes), nMois = nombre de versements.
 export function calculerMensualite(montantCents, nMois) {
-  const i = TAUX_ANNUEL / 12;
   const P = montantCents / 100;
-  const m = (P * i) / (1 - Math.pow(1 + i, -nMois));
-  const mensualite = Math.round(m * 100) / 100;
+  const annees = nMois / 12;
+  const interets = P * TAUX_ANNUEL * annees;              // intérêt simple sur le montant
+  const mensualite = Math.round(((P + interets) / nMois) * 100) / 100;
   const totalPaye = Math.round(mensualite * nMois * 100) / 100;
   return {
     mensualiteCents: Math.round(mensualite * 100),
