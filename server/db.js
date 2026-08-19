@@ -268,6 +268,10 @@ try { db.exec("ALTER TABLE products ADD COLUMN fournisseur TEXT NOT NULL DEFAULT
 try { db.exec("ALTER TABLE users ADD COLUMN tel TEXT NOT NULL DEFAULT ''"); } catch (e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN adresse TEXT NOT NULL DEFAULT ''"); } catch (e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN note TEXT NOT NULL DEFAULT ''"); } catch (e) {}
+// Liaison au CRM Perfex : id du client Perfex (userid) rattaché au compte,
+// posé UNIQUEMENT après vérification (courriel + téléphone) à l'inscription.
+// Sert à afficher les VRAIES factures/données du client depuis le CRM.
+try { db.exec("ALTER TABLE users ADD COLUMN perfex_id INTEGER"); } catch (e) {}
 
 export default db;
 export { DB_PATH };

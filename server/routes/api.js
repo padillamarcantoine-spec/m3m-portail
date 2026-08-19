@@ -3,11 +3,14 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import db from '../db.js';
 import { creerPaiement, creerConnexionBancaire, notifierMagasin, stripeConfigured } from '../integrations.js';
+import { trouverClientParCourriel, facturesClient, perfexConfigured } from '../perfex.js';
 
 const router = express.Router();
 
 // ---- helpers --------------------------------------------------------
 const money = (cents) => (cents / 100).toLocaleString('fr-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' $';
+// Chiffres seulement (comparaison de téléphones robuste au formatage).
+const digits = (s) => String(s || '').replace(/\D/g, '');
 const nowFr = () => {
   const mois = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
   const d = new Date();
@@ -99,17 +102,39 @@ router.post('/demande-financement', async (req, res) => {
 // =====================================================================
 //  AUTH CLIENT
 // =====================================================================
-router.post('/auth/inscription', (req, res) => {
-  const { nom, courriel, mdp } = req.body || {};
+router.post('/auth/inscription', async (req, res) => {
+  const { nom, courriel, mdp, tel } = req.body || {};
   if (!nom || !courriel || !mdp) return res.status(400).json({ error: 'Tous les champs sont requis.' });
   if (mdp.length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum.' });
-  const exists = db.prepare('SELECT id FROM users WHERE courriel = ?').get(courriel.toLowerCase());
+  const courrielN = courriel.toLowerCase().trim();
+  const exists = db.prepare('SELECT id FROM users WHERE courriel = ?').get(courrielN);
   if (exists) return res.status(409).json({ error: 'Ce courriel a déjà un compte.' });
+
+  // Liaison au CRM Perfex : on rattache le compte au dossier client SEULEMENT si
+  // le courriel existe dans le CRM ET que le téléphone fourni correspond à celui
+  // du dossier. Faute de vérification du courriel par email, le téléphone sert de
+  // preuve que la personne est bien le client (anti-usurpation / anti-IDOR à la source).
+  let perfexId = null, lieCrm = false;
+  if (perfexConfigured()) {
+    try {
+      const pc = await trouverClientParCourriel(courrielN);
+      if (pc && pc.id && digits(tel).length >= 10 &&
+          digits(pc.phonenumber).slice(-10) === digits(tel).slice(-10)) {
+        perfexId = Number(pc.id);
+        lieCrm = true;
+      }
+    } catch (e) {
+      // CRM injoignable : on crée quand même le compte local (sans liaison). Le client
+      // pourra être relié plus tard ; il ne verra pas de données d'un autre par erreur.
+      console.error('[inscription] liaison Perfex impossible:', e.message);
+    }
+  }
+
   const hash = bcrypt.hashSync(mdp, 10);
-  const r = db.prepare('INSERT INTO users (courriel,nom,mdp_hash,role) VALUES (?,?,?,?)')
-    .run(courriel.toLowerCase(), nom.trim(), hash, 'client');
+  const r = db.prepare('INSERT INTO users (courriel,nom,mdp_hash,role,perfex_id,tel) VALUES (?,?,?,?,?,?)')
+    .run(courrielN, nom.trim(), hash, 'client', perfexId, digits(tel));
   req.session.userId = r.lastInsertRowid;
-  res.json({ ok: true, nom: nom.trim() });
+  res.json({ ok: true, nom: nom.trim(), lieCrm });
 });
 
 router.post('/auth/connexion', (req, res) => {
@@ -137,11 +162,31 @@ router.get('/auth/moi', (req, res) => {
 // =====================================================================
 //  ESPACE CLIENT
 // =====================================================================
-router.get('/compte/factures', requireClient, (req, res) => {
+router.get('/compte/factures', requireClient, async (req, res) => {
+  const u = db.prepare('SELECT perfex_id FROM users WHERE id = ?').get(req.session.userId);
+  // VRAIES factures du CRM Perfex si le compte est lié. On utilise l'id CRM
+  // stocké côté serveur (jamais un id fourni par le client) → un client ne peut
+  // voir QUE ses propres factures.
+  if (u && u.perfex_id && perfexConfigured()) {
+    try {
+      const reelles = await facturesClient(u.perfex_id);
+      return res.json((reelles || []).map(f => ({
+        no: f.no, date: f.date, desc: f.desc,
+        montant: f.montant, solde: f.solde,
+        statut: f.statut, meta: f.meta || '', source: 'perfex'
+      })));
+    } catch (e) {
+      // Panne CRM : on ne montre PAS les données démo locales d'un client lié
+      // (ce ne sont pas les siennes). 503 → le front affiche « réessayez ».
+      console.error('[compte/factures] Perfex échec:', e.message);
+      return res.status(503).json({ error: 'crm_indisponible' });
+    }
+  }
+  // Compte non lié au CRM : données locales (démo / factures manuelles de l'app).
   const rows = db.prepare('SELECT * FROM invoices WHERE user_id = ? ORDER BY id').all(req.session.userId);
   res.json(rows.map(f => ({
     id: f.id, no: f.ref, date: f.date, desc: f.descr,
-    montant: money(f.montant_cents), statut: f.statut, meta: f.meta
+    montant: money(f.montant_cents), statut: f.statut, meta: f.meta, source: 'local'
   })));
 });
 

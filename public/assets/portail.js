@@ -27,8 +27,8 @@ const S = {
   prix: { e: 0, format: '', nom: '', tel: '', err: false },
   fin: { e: 0, item: '', montant: '', nMois: 18, nom: '', courriel: '', tel: '', ref: '', calcul: null, statut: '', etapes: [], message: '', err: '', url: '' },
   ongletConnexion: 'connexion', ongletCompte: 'apercu',
-  ident: '', mdp: '', insNom: '', insCourriel: '', insMdp: '', authErr: '',
-  factures: [], service: [], financements: [],
+  ident: '', mdp: '', insNom: '', insCourriel: '', insMdp: '', insTel: '', authErr: '', lieCrm: false,
+  factures: [], facturesErr: false, service: [], financements: [],
   selection: [], selNom: '', selTel: '', selErr: '', selEnvoye: false,
   srvItem: '', srvDesc: '', srvPhoto: false, srvEnvoye: false, srvRef: '', srvErr: false
 };
@@ -557,6 +557,8 @@ function screenConnexion() {
     : `<div style="padding:28px;display:flex;flex-direction:column;gap:16px">
         <label class="label">Nom complet<input id="insNom" value="${esc(S.insNom)}" placeholder="Prénom Nom" autocomplete="name" class="field" style="font-weight:400;letter-spacing:0;text-transform:none"></label>
         <label class="label">Courriel<input id="insCourriel" value="${esc(S.insCourriel)}" placeholder="vous@courriel.com" type="email" inputmode="email" autocomplete="email" class="field" style="font-weight:400;letter-spacing:0;text-transform:none"></label>
+        <label class="label">Téléphone<input id="insTel" value="${esc(S.insTel)}" placeholder="514-555-0199" type="tel" inputmode="tel" autocomplete="tel" class="field" style="font-weight:400;letter-spacing:0;text-transform:none"></label>
+        <div style="font-size:11.5px;color:var(--gris-brun2);margin-top:-8px;line-height:1.5">Le même numéro qu'en magasin — il relie automatiquement votre compte à votre dossier client (factures, financements).</div>
         <label class="label">Mot de passe<input id="insMdp" type="password" value="${esc(S.insMdp)}" placeholder="8 caractères minimum" autocomplete="new-password" class="field" style="font-weight:400;letter-spacing:0;text-transform:none"></label>
         ${S.authErr ? `<div class="err">${esc(S.authErr)}</div>` : ''}
         <button class="btn" data-act="inscription-submit">Créer mon compte</button>
@@ -602,11 +604,14 @@ function screenCompte() {
       </div>`);
     }
     if (aPayer) {
+      const payableAp = aPayer.source !== 'perfex' && aPayer.id != null;
       cards.push(`<div class="card" style="padding:24px">
         <div style="font-size:10.5px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--or-fonce)">Facture à payer</div>
-        <div class="serif" style="font-weight:600;font-size:38px;margin-top:12px">${esc(aPayer.montant)}</div>
+        <div class="serif" style="font-weight:600;font-size:38px;margin-top:12px">${esc(aPayer.solde || aPayer.montant)}</div>
         <div style="font-size:13px;color:var(--gris-brun);margin-top:6px">${esc(aPayer.desc)} · ${esc(aPayer.no)}</div>
-        <button data-payer="${aPayer.id}" style="margin-top:14px;background:none;border:none;padding:0;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--or-fonce)">Payer maintenant →</button>
+        ${payableAp
+          ? `<button data-payer="${aPayer.id}" style="margin-top:14px;background:none;border:none;padding:0;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--or-fonce)">Payer maintenant →</button>`
+          : `<button data-act="tab-factures" style="margin-top:14px;background:none;border:none;padding:0;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--or-fonce)">Voir mes factures →</button>`}
       </div>`);
     }
     if (srv) {
@@ -630,25 +635,37 @@ function screenCompte() {
         </div>`;
   } else if (t === 'factures') {
     const badge = (st) => st === 'payee' ? 'ok' : st === 'a_payer' ? 'attention' : 'fin';
-    const label = (f) => f.statut === 'payee' ? 'Payée' : f.statut === 'a_payer' ? 'À payer' : ('Financement — ' + (f.meta || ''));
+    const label = (f) => f.statut === 'payee' ? 'Payée' : f.statut === 'a_payer' ? 'À payer'
+      : f.statut === 'annulee' ? 'Annulée' : ('Financement — ' + (f.meta || ''));
+    // Payable en ligne = facture locale de l'app (avec id). Payer une VRAIE facture
+    // du CRM en ligne viendra avec Stripe ; en attendant, on affiche les modes de règlement.
+    const payable = (f) => f.source !== 'perfex' && f.id != null;
+    const montantHtml = (f) => `<div style="text-align:right">
+        <span class="serif" style="font-weight:600;font-size:24px">${esc(f.montant)}</span>
+        ${f.solde && f.statut !== 'payee' && f.solde !== f.montant ? `<div style="font-size:12px;color:var(--gris-brun2);margin-top:2px">Solde : ${esc(f.solde)}</div>` : ''}
+      </div>`;
     const rows = S.factures.map(f => `<div class="card" style="padding:20px 22px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap">
       <div style="min-width:200px">
         <div style="font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--gris-brun2)">${esc(f.no)} — ${esc(f.date)}</div>
         <div style="font-size:15px;font-weight:600;margin-top:5px">${esc(f.desc)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-        <span class="serif" style="font-weight:600;font-size:24px">${esc(f.montant)}</span>
+        ${montantHtml(f)}
         <span class="badge ${badge(f.statut)}">${esc(label(f))}</span>
         ${f.statut === 'a_payer'
-          ? `<button class="btn" style="padding:10px 20px;font-size:13px" data-payer="${f.id}">Payer</button>`
-          : `<button class="btn btn-ghost" style="padding:10px 20px;font-size:13px">${f.statut === 'financement' ? 'Voir le plan' : 'Reçu'}</button>`}
+          ? (payable(f)
+              ? `<button class="btn" style="padding:10px 20px;font-size:13px" data-payer="${f.id}">Payer</button>`
+              : `<span style="font-size:12px;color:var(--gris-brun2);text-align:right;max-width:160px;line-height:1.45">À régler en magasin, par Interac ou virement</span>`)
+          : `<button class="btn btn-ghost" style="padding:10px 20px;font-size:13px">${f.statut === 'financement' ? 'Voir le plan' : f.statut === 'annulee' ? 'Annulée' : 'Reçu'}</button>`}
       </div>
     </div>`).join('');
-    contenu = S.factures.length
-      ? `<div style="display:flex;flex-direction:column;gap:14px;max-width:880px">${rows}
+    contenu = S.facturesErr
+      ? `<div class="card" style="padding:40px 28px;text-align:center;max-width:880px"><div class="serif" style="font-weight:600;font-size:22px">Connexion à votre dossier momentanément indisponible.</div><p style="margin:10px auto 0;max-width:48ch;font-size:14px;line-height:1.6;color:var(--gris-brun)">Réessayez dans un instant — vos factures sont en sécurité dans notre système.</p><button class="btn" data-act="tab-factures" style="margin-top:18px">Réessayer</button></div>`
+      : S.factures.length
+        ? `<div style="display:flex;flex-direction:column;gap:14px;max-width:880px">${rows}
       <div style="font-size:12.5px;color:var(--gris-brun2);display:flex;align-items:center;gap:8px"><span style="width:6px;height:6px;background:var(--laiton);transform:rotate(45deg)"></span>Paiements traités de façon sécurisée par Stripe.</div>
     </div>`
-      : `<div class="card" style="padding:40px 28px;text-align:center;max-width:880px"><div class="serif" style="font-weight:600;font-size:24px">Aucune facture pour l'instant.</div><p style="margin:10px auto 0;max-width:48ch;font-size:14px;line-height:1.6;color:var(--gris-brun)">Vos factures et reçus apparaîtront ici après votre premier achat.</p></div>`;
+        : `<div class="card" style="padding:40px 28px;text-align:center;max-width:880px"><div class="serif" style="font-weight:600;font-size:24px">Aucune facture pour l'instant.</div><p style="margin:10px auto 0;max-width:48ch;font-size:14px;line-height:1.6;color:var(--gris-brun)">Vos factures et reçus apparaîtront ici après votre premier achat.</p></div>`;
   } else {
     const ticket = S.service[0];
     const suivi = ticket ? `<div class="card" style="padding:26px">
@@ -865,7 +882,8 @@ document.addEventListener('click', async (e) => {
     case 'inscription-submit': {
       capter();
       try {
-        const r = await api('/auth/inscription', { method: 'POST', body: { nom: S.insNom, courriel: S.insCourriel, mdp: S.insMdp } });
+        const r = await api('/auth/inscription', { method: 'POST', body: { nom: S.insNom, courriel: S.insCourriel, mdp: S.insMdp, tel: S.insTel } });
+        S.lieCrm = !!r.lieCrm;
         await apresConnexion(r.nom);
       } catch (err) { S.authErr = err.message; render(); }
       break;
@@ -901,7 +919,7 @@ document.addEventListener('input', (e) => {
     finItem: () => S.fin.item = v, finNom: () => S.fin.nom = v, finTel: () => S.fin.tel = v,
     finMontant: () => S.fin.montant = v, finCourriel: () => S.fin.courriel = v, finMois: () => S.fin.nMois = v,
     ident: () => S.ident = v, mdp: () => S.mdp = v,
-    insNom: () => S.insNom = v, insCourriel: () => S.insCourriel = v, insMdp: () => S.insMdp = v,
+    insNom: () => S.insNom = v, insCourriel: () => S.insCourriel = v, insMdp: () => S.insMdp = v, insTel: () => S.insTel = v,
     srvItem: () => S.srvItem = v, srvDesc: () => S.srvDesc = v,
     selNom: () => S.selNom = v, selTel: () => S.selTel = v
   };
@@ -913,11 +931,11 @@ document.addEventListener('input', (e) => {
 // Recherche/pagination via le serveur : voir chargerBoutique().
 
 function capter() {
-  ['q','prixNom','prixTel','finItem','finNom','finTel','finMontant','finCourriel','finMois','ident','mdp','insNom','insCourriel','insMdp','srvItem','srvDesc','selNom','selTel']
+  ['q','prixNom','prixTel','finItem','finNom','finTel','finMontant','finCourriel','finMois','ident','mdp','insNom','insCourriel','insMdp','insTel','srvItem','srvDesc','selNom','selTel']
     .forEach(id => { const el = document.getElementById(id); if (!el) return;
       const m = { q:'q', prixNom:['prix','nom'], prixTel:['prix','tel'], finItem:['fin','item'], finNom:['fin','nom'], finTel:['fin','tel'],
         finMontant:['fin','montant'], finCourriel:['fin','courriel'], finMois:['fin','nMois'],
-        ident:'ident', mdp:'mdp', insNom:'insNom', insCourriel:'insCourriel', insMdp:'insMdp', srvItem:'srvItem', srvDesc:'srvDesc', selNom:'selNom', selTel:'selTel' }[id];
+        ident:'ident', mdp:'mdp', insNom:'insNom', insCourriel:'insCourriel', insMdp:'insMdp', insTel:'insTel', srvItem:'srvItem', srvDesc:'srvDesc', selNom:'selNom', selTel:'selTel' }[id];
       if (Array.isArray(m)) S[m[0]][m[1]] = el.value; else S[m] = el.value;
     });
 }
@@ -928,7 +946,16 @@ async function apresConnexion(nom) {
   await chargerFactures(); await chargerService(); await chargerFinancements();
   history.pushState({}, '', '/compte'); render(); updateSEO(); window.scrollTo(0, 0);
 }
-async function chargerFactures() { try { S.factures = await api('/compte/factures'); } catch { S.factures = []; } }
+async function chargerFactures() {
+  S.facturesErr = false;
+  try {
+    const r = await api('/compte/factures');
+    S.factures = Array.isArray(r) ? r : [];
+  } catch (e) {
+    S.factures = [];
+    if (String(e && e.message || '').includes('crm')) S.facturesErr = true;
+  }
+}
 async function chargerService() { try { S.service = await api('/compte/service'); } catch { S.service = []; } }
 async function chargerFinancements() { try { S.financements = await api('/compte/financements'); } catch { S.financements = []; } }
 
