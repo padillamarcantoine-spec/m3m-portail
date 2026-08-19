@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commandes magasins — Trois Mousquetaires</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="/assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --creme:#f6f2e9; --surface:#fffdf8; --encre:#1b1510; --laiton:#c89b3c; --or-fonce:#8a6a24;
+          --gris:#6d6250; --gris2:#8d8069; --bord:#d8cfb9; --ok:#7c8a4f; --err:#b0483a; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--creme); color:var(--encre); font-family:'Jost',sans-serif; min-height:100vh; }
+  .wrap { max-width:560px; margin:0 auto; padding:28px 18px 80px; }
+  h1 { font-family:'Cormorant Garamond',serif; font-size:30px; text-align:center; margin-top:10px; }
+  .sous { text-align:center; color:var(--gris2); font-size:13.5px; margin:6px 0 24px; }
+  .card { background:var(--surface); border:1px solid var(--bord); border-radius:6px; padding:22px; margin-bottom:16px; }
+  label { display:block; font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--or-fonce); margin:14px 0 6px; }
+  input, select, textarea { width:100%; border:1px solid var(--bord); border-radius:4px; background:#fff; padding:13px 14px; font:inherit; font-size:15px; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--laiton); border-color:var(--laiton); }
+  .btn { width:100%; margin-top:20px; background:var(--encre); color:var(--creme); border:none; border-radius:4px; padding:15px; font:inherit; font-size:15px; font-weight:600; letter-spacing:.04em; cursor:pointer; }
+  .btn:disabled { opacity:.6; }
+  .magasins { display:grid; gap:10px; margin-top:8px; }
+  .mag { display:flex; align-items:center; gap:12px; border:2px solid var(--bord); border-radius:6px; background:#fff; padding:14px 16px; font:inherit; font-size:15.5px; font-weight:500; cursor:pointer; text-align:left; }
+  .mag.actif { border-color:var(--laiton); background:#faf5e7; }
+  .mag .pt { width:12px; height:12px; border-radius:50%; flex:none; }
+  .err { color:var(--err); font-size:13.5px; margin-top:12px; text-align:center; }
+  .succes { border:1px solid var(--ok); background:#f3f6ea; border-radius:6px; padding:16px 18px; margin-bottom:16px; font-size:14.5px; line-height:1.55; }
+  .ligne { display:flex; justify-content:space-between; gap:10px; padding:12px 0; border-top:1px solid var(--bord); font-size:14px; }
+  .ligne:first-child { border-top:none; }
+  .badge { font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; padding:4px 10px; border-radius:999px; white-space:nowrap; align-self:center; }
+  .b-nouvelle { background:#f4e6c8; color:#8a6a24; }
+  .b-commandee { background:#e3e9f2; color:#3f5a80; } .b-transit { background:#efe4f2; color:#6d4a78; } .b-recue { background:#e7edda; color:#55613a; } .b-annulee { background:#eee; color:#888; }
+  .muted { color:var(--gris2); font-size:12.5px; }
+  h2 { font-family:'Cormorant Garamond',serif; font-size:22px; margin:26px 0 10px; }
+  .lien-retour { display:block; text-align:center; margin-top:18px; color:var(--gris2); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Commandes magasins</h1>
+  <div class="sous">Meubles Trois Mousquetaires · Matelas Dépôt · Électro Marpad</div>
+  <div id="app"><div class="card" style="text-align:center;color:var(--gris2)">Chargement…</div></div>
+  <a class="lien-retour" href="/">← Retour au portail client</a>
+</div>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const app = $('app');
+  const S = {
+    ouvert: false, magasins: [], fournisseurs: [],
+    magasin: localStorage.getItem('mag_choix') || '', auteur: localStorage.getItem('mag_auteur') || '',
+    envoye: null, err: '', commandes: [], busy: false
+  };
+
+  async function api(path, opts = {}) {
+    const r = await fetch('/api' + path, {
+      method: opts.method || 'GET',
+      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Erreur');
+    return data;
+  }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  function render() {
+    if (!S.ouvert) {
+      app.innerHTML = `<div class="card">
+        <label>Code magasin</label>
+        <input id="code" type="password" inputmode="numeric" placeholder="••••" autocomplete="off">
+        ${S.err ? `<div class="err">${esc(S.err)}</div>` : ''}
+        <button class="btn" id="go">Entrer</button>
+      </div>`;
+      $('go').onclick = deverrouiller;
+      $('code').addEventListener('keydown', e => { if (e.key === 'Enter') deverrouiller(); });
+      $('code').focus();
+      return;
+    }
+    const statutFr = { nouvelle: 'Reçue', commandee: 'Commandée', transit: 'En transit', recue: 'Livrée', annulee: 'Annulée' };
+    app.innerHTML = `
+      ${S.envoye ? `<div class="succes">✓ Commande <strong>${esc(S.envoye)}</strong> envoyée — Marc-Antoine la voit immédiatement dans sa console. Vous pouvez en entrer une autre.</div>` : ''}
+      <div class="card">
+        <label>Votre magasin</label>
+        <div class="magasins">${S.magasins.map(m => `
+          <button type="button" class="mag${S.magasin === m.nom ? ' actif' : ''}" data-mag="${esc(m.nom)}">
+            <span class="pt" style="background:${esc(m.point)}"></span>${esc(m.court)}
+          </button>`).join('')}
+        </div>
+        <label>Modèle / article à commander</label>
+        <input id="modele" placeholder="Ex. : Matelas Primo Queen ferme">
+        <label>Fournisseur (si connu)</label>
+        <select id="fournisseur"><option value="">Je ne sais pas — à déterminer</option>
+          ${S.fournisseurs.map(f => `<option>${esc(f)}</option>`).join('')}</select>
+        <label>Quantité</label>
+        <input id="qte" type="number" min="1" value="1" inputmode="numeric">
+        <label>Votre nom</label>
+        <input id="auteur" value="${esc(S.auteur)}" placeholder="Qui commande ?">
+        <label>Note (facultatif)</label>
+        <textarea id="note" rows="2" placeholder="Couleur, dimension, client qui attend…"></textarea>
+        ${S.err ? `<div class="err">${esc(S.err)}</div>` : ''}
+        <button class="btn" id="envoyer"${S.busy ? ' disabled' : ''}>${S.busy ? 'Envoi…' : 'Envoyer la commande'}</button>
+      </div>
+      ${S.magasin ? `<h2>Vos ${S.commandes.length} dernières commandes — ${esc(S.magasin)}</h2>
+      <div class="card">${S.commandes.length ? S.commandes.map(c => `
+        <div class="ligne">
+          <div><strong>${esc(c.modele)}</strong> × ${esc(String(c.qte))}<br>
+            <span class="muted">${esc(c.ref)} · ${esc(c.fournisseur)} · ${esc(c.date)}</span></div>
+          <span class="badge b-${esc(c.statut)}">${esc(statutFr[c.statut] || c.statut)}</span>
+        </div>`).join('') : '<div class="muted">Aucune commande pour ce magasin encore.</div>'}
+      </div>` : ''}`;
+    document.querySelectorAll('.mag').forEach(b => b.onclick = async () => {
+      S.magasin = b.dataset.mag; localStorage.setItem('mag_choix', S.magasin);
+      await chargerCommandes(); render();
+    });
+    $('envoyer').onclick = envoyer;
+  }
+
+  async function deverrouiller() {
+    S.err = '';
+    try {
+      await api('/magasin/deverrouiller', { method: 'POST', body: { code: $('code').value } });
+      S.ouvert = true;
+      await chargerDonnees(); await chargerCommandes();
+    } catch (e) { S.err = e.message; }
+    render();
+  }
+  async function chargerDonnees() {
+    const d = await api('/magasin/donnees');
+    S.magasins = d.magasins; S.fournisseurs = d.fournisseurs;
+    if (!S.magasin && d.magasins.length) S.magasin = '';
+  }
+  async function chargerCommandes() {
+    S.commandes = S.magasin ? await api('/magasin/commandes?magasin=' + encodeURIComponent(S.magasin)).catch(() => []) : [];
+  }
+  async function envoyer() {
+    S.err = ''; S.envoye = null;
+    const corps = {
+      modele: $('modele').value, fournisseur: $('fournisseur').value,
+      qte: $('qte').value, magasin: S.magasin, auteur: $('auteur').value, note: $('note').value
+    };
+    if (!S.magasin) { S.err = 'Choisissez votre magasin.'; render(); return; }
+    if (!corps.modele.trim()) { S.err = 'Indiquez le modèle à commander.'; render(); return; }
+    S.auteur = corps.auteur; localStorage.setItem('mag_auteur', S.auteur);
+    S.busy = true; render();
+    try {
+      const r = await api('/magasin/commandes', { method: 'POST', body: corps });
+      S.envoye = r.ref;
+      await chargerCommandes();
+    } catch (e) { S.err = e.message; }
+    S.busy = false; render();
+    window.scrollTo(0, 0);
+  }
+
+  (async function init() {
+    try {
+      const e = await api('/magasin/etat');
+      S.ouvert = !!e.ouvert;
+      if (S.ouvert) { await chargerDonnees(); await chargerCommandes(); }
+    } catch (e2) {}
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

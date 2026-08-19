@@ -606,7 +606,7 @@ function screenCompte() {
       </div>`);
     }
     if (aPayer) {
-      const payableAp = aPayer.source !== 'perfex' && aPayer.id != null;
+      const payableAp = S.paiementEnLigne && aPayer.source !== 'perfex' && aPayer.id != null;
       cards.push(`<div class="card" style="padding:24px">
         <div style="font-size:10.5px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--or-fonce)">Facture à payer</div>
         <div class="serif" style="font-weight:600;font-size:38px;margin-top:12px">${esc(aPayer.solde || aPayer.montant)}</div>
@@ -639,9 +639,9 @@ function screenCompte() {
     const badge = (st) => st === 'payee' ? 'ok' : (st === 'a_payer' || st === 'en_retard') ? 'attention' : 'fin';
     const label = (f) => f.statut === 'payee' ? 'Payée' : f.statut === 'a_payer' ? 'À payer'
       : f.statut === 'en_retard' ? 'En retard' : f.statut === 'annulee' ? 'Annulée' : ('Financement — ' + (f.meta || ''));
-    // Payable en ligne = facture locale de l'app (avec id). Payer une VRAIE facture
-    // du CRM en ligne viendra avec Stripe ; en attendant, on affiche les modes de règlement.
-    const payable = (f) => f.source !== 'perfex' && f.id != null;
+    // Payable en ligne = paiement en ligne ACTIVÉ (Stripe branché) + facture locale
+    // de l'app (avec id). Sinon : « à régler en magasin, Interac ou virement ».
+    const payable = (f) => S.paiementEnLigne && f.source !== 'perfex' && f.id != null;
     const aRegler = (f) => f.statut === 'a_payer' || f.statut === 'en_retard';
     const montantHtml = (f) => `<div style="text-align:right">
         <span class="serif" style="font-weight:600;font-size:24px">${esc(f.montant)}</span>
@@ -966,6 +966,9 @@ async function chargerFinancements() { try { S.financements = await api('/compte
 // ================= init =================
 (async function init() {
   try { S.selection = JSON.parse(localStorage.getItem('m3m_sel') || '[]') || []; } catch (e) {}
+  // Paiement en ligne actif seulement quand Stripe est branché (décision : pas
+  // d'achat en ligne pour le moment — le panier sert aux demandes de prix).
+  try { const cfg = await api('/config'); S.paiementEnLigne = !!cfg.stripe; } catch (e) { S.paiementEnLigne = false; }
   try {
     const f = await api('/catalogue/facettes');
     S.total = f.total; S.categories = f.categories; S.fournisseurs = f.fournisseurs;

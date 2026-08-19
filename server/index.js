@@ -59,6 +59,7 @@ function rateLimit({ windowMs, max }) {
 }
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 40 }));
 app.use('/api/admin/deverrouiller', rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }));
+app.use('/api/magasin/deverrouiller', rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }));
 app.use(['/api/demande-prix', '/api/demande-prix-lot', '/api/demande-financement', '/api/chat', '/api/financement/demande'], rateLimit({ windowMs: 60 * 1000, max: 20 }));
 
 app.use('/api', api);

@@ -220,6 +220,11 @@ router.get('/compte/factures', requireClient, async (req, res) => {
 });
 
 router.post('/compte/factures/:id/payer', requireClient, async (req, res) => {
+  // DÉCISION MÉTIER (Marc-Antoine) : pas d'achat/paiement en ligne pour le moment.
+  // Tant que Stripe n'est pas configuré, on refuse — sinon la « simulation »
+  // marquerait une facture payée sans argent reçu.
+  if (!stripeConfigured() && process.env.NODE_ENV === 'production')
+    return res.status(503).json({ error: 'Le paiement en ligne arrive bientôt — réglez en magasin, par Interac ou virement.' });
   const f = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.session.userId);
   if (!f) return res.status(404).json({ error: 'Facture introuvable' });
   if (f.statut === 'payee') return res.json({ ok: true, deja: true });
@@ -339,6 +344,61 @@ router.post('/admin/inventaire/:id/ajuster', requireAdmin, (req, res) => {
   const nouvelle = Math.max(0, s.qte + delta);
   db.prepare('UPDATE stock SET qte = ? WHERE id = ?').run(nouvelle, s.id);
   res.json({ ok: true, qte: nouvelle });
+});
+
+// =====================================================================
+//  PORTAIL MAGASINS — entrée de commandes SIMPLE pour les autres magasins
+//  (Matelas Dépôt, Électro Marpad). Code séparé de la console admin :
+//  ils rentrent leur commande, c'est tout — aucune donnée sensible visible.
+//  Les commandes tombent dans la même liste que la console admin traite.
+// =====================================================================
+function requireMagasin(req, res, next) {
+  if (!req.session.magasinUnlocked) return res.status(401).json({ error: 'Code magasin requis' });
+  next();
+}
+
+router.post('/magasin/deverrouiller', (req, res) => {
+  const code = (req.body?.code || '').trim();
+  const attendu = (process.env.MAGASIN_CODE || '2485') + '';
+  if (code === attendu) {
+    req.session.magasinUnlocked = true;
+    return res.json({ ok: true });
+  }
+  res.status(401).json({ error: 'Code incorrect.' });
+});
+router.get('/magasin/etat', (req, res) => res.json({ ouvert: !!req.session.magasinUnlocked }));
+
+// Listes pour le formulaire (magasins + fournisseurs) — rien de sensible.
+router.get('/magasin/donnees', requireMagasin, (req, res) => res.json({
+  magasins: db.prepare('SELECT nom, court, point FROM stores ORDER BY id').all(),
+  fournisseurs: db.prepare('SELECT nom FROM suppliers ORDER BY nom').all().map(f => f.nom),
+}));
+
+// Créer une commande — même registre que la console admin (ref C-xxxx, historique).
+router.post('/magasin/commandes', requireMagasin, (req, res) => {
+  const { modele, fournisseur, qte, magasin, auteur, note } = req.body || {};
+  const q = parseInt(String(qte).replace(/[^0-9]/g, ''), 10);
+  const store = db.prepare('SELECT nom FROM stores WHERE nom = ?').get((magasin || '').trim());
+  if (!modele || !modele.trim() || !q || q < 1 || !store)
+    return res.status(400).json({ error: 'Modèle, quantité (≥1) et magasin requis.' });
+  const existing = db.prepare("SELECT ref FROM orders WHERE ref LIKE 'C-20%'").all()
+    .map(r => +r.ref.slice(2)).filter(n => n >= 2049);
+  const ref = 'C-' + (2049 + existing.length);
+  const dateJour = new Date().toISOString().slice(0, 10);
+  const r = db.prepare('INSERT INTO orders (ref,modele,fournisseur,magasin,auteur,date,qte,statut,note) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(ref, modele.trim(), (fournisseur || '').trim() || 'À déterminer', store.nom,
+      (auteur || '').trim() || 'Équipe', dateJour, q, 'nouvelle', (note || '').trim());
+  db.prepare('INSERT INTO order_history (order_id,label,par,magasin,quand) VALUES (?,?,?,?,?)')
+    .run(r.lastInsertRowid, 'Commande créée', (auteur || '').trim() || 'Équipe', store.nom, nowFr());
+  res.json({ ok: true, ref });
+});
+
+// Les commandes de LEUR magasin seulement (suivi simple, lecture seule).
+router.get('/magasin/commandes', requireMagasin, (req, res) => {
+  const store = db.prepare('SELECT nom FROM stores WHERE nom = ?').get((req.query.magasin || '').trim());
+  if (!store) return res.json([]);
+  const rows = db.prepare('SELECT ref, modele, fournisseur, qte, statut, date, auteur FROM orders WHERE magasin = ? ORDER BY id DESC LIMIT 30').all(store.nom);
+  res.json(rows);
 });
 
 // financement maison — lien de connexion bancaire (Stripe)
