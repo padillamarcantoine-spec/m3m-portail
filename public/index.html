@@ -16,6 +16,11 @@
 <meta property="og:image" content="https://app.meublestroismousquetaires.ca/assets/logo.png">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="/assets/logo.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="M3M">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
@@ -26,5 +31,11 @@
 <div id="app"><div style="padding:80px;text-align:center;color:#8d8069;font-family:'Cormorant Garamond',serif;font-size:22px">Chargement…</div></div>
 <script src="/assets/portail.js?v=8"></script>
 <script src="/assets/chat.js?v=4"></script>
+<script>
+// PWA : enregistre le service worker (app installable « Ajouter à l'écran d'accueil »).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+}
+</script>
 </body>
 </html>
